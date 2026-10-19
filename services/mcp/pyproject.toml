@@ -1,35 +1,54 @@
 [project]
 name = "libre-box-mcp"
 version = "1.0.0"
-description = "Libre Box — Sandbox MCP Server"
-requires-python = ">=3.13"
+description = "LibreBox — Sandbox MCP Server"
+requires-python = ">=3.14"
 dependencies = [
-    "aiodocker",
-    "fastapi",
     "loguru",
-    "mcp",
     "pydantic",
     "pydantic-settings",
-    "pyjwt",
     "starlette",
     "uvicorn",
-    "uvloop; sys_platform != 'win32'",
+    "uvloop",
+]
+
+[project.optional-dependencies]
+mcp = [
+    "aiodocker",
+    "aiohttp",
+    "mcp",
+    "pillow",
+]
+auth-gate = [
+    "pyjwt",
+    "pymongo",
+]
+socket-proxy = [
+    "aiohttp",
 ]
 
 [dependency-groups]
 dev = [
+    "libre-box-mcp[auth-gate,mcp]",
     "mypy",
     "ruff",
 ]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py314"
 line-length = 200
 src = ["."]
 
+[tool.ruff.per-file-target-version]
+"sandbox_scripts/**" = "py314"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "ASYNC", "S", "A", "C4", "T20", "SIM", "RUF", "TID", "PIE"]
-ignore = ["E501", "S101", "S104", "S603", "S607", "ASYNC109"]
+ignore = ["E501", "I001", "S104", "S603", "S607", "ASYNC109"]
+
+[tool.ruff.lint.per-file-ignores]
+"infrastructure/fs/landlock_exec.py" = ["S606"]
+"sandbox_scripts/**" = ["T201"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
@@ -38,7 +57,7 @@ lines-after-imports = 2
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.14"
 strict = true
 plugins = ["pydantic.mypy"]
 

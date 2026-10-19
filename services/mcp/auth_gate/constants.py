@@ -1,0 +1,13 @@
+from typing import Final
+
+
+AUTH_PORT: Final[int] = 8081
+AUTH_MAX_CONCURRENT_REQUESTS: Final[int] = 256
+AUTH_GRACEFUL_SHUTDOWN_SECONDS: Final[int] = 5
+AUTH_HEALTH_TIMEOUT_SECONDS: Final[float] = 2.0
+AUTH_LOG_FILE_NAME: Final[str] = "auth-gate.log"
+AUTH_MONGO_TIMEOUT_MS: Final[int] = 3000
+AUTH_SESSION_CACHE_TTL_SECONDS: Final[float] = 10.0
+AUTH_SESSION_CACHE_MAX_ENTRIES: Final[int] = 4096
+LIBRECHAT_DATABASE_NAME: Final[str] = "LibreChat"
+LIBRECHAT_SESSIONS_COLLECTION: Final[str] = "sessions"

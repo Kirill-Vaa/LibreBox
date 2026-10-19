@@ -1,9 +1,3 @@
-.venv/
 **/__pycache__/
-*.py[cod]
-.mypy_cache/
-.ruff_cache/
-logs/
-*.log
-.DS_Store
-Thumbs.db
+**/*.py[cod]
+**/.DS_Store

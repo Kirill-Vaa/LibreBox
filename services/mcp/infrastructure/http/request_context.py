@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterable
 from typing import Final
 from uuid import uuid4
@@ -8,6 +9,7 @@ from utils.logger import logger
 
 
 _REQUEST_ID_HEADER: Final[bytes] = b"x-request-id"
+_REQUEST_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 class RequestContextMiddleware:
@@ -34,7 +36,14 @@ class RequestContextMiddleware:
     def _extract_request_id(scope: Scope) -> str | None:
         headers: Iterable[tuple[bytes, bytes]] = scope.get("headers", [])
         for header_name, header_value in headers:
-            if header_name == _REQUEST_ID_HEADER:
-                return header_value.decode(errors="replace")
+            if header_name != _REQUEST_ID_HEADER:
+                continue
+
+            request_id = header_value.decode(errors="replace")
+            if _REQUEST_ID_PATTERN.fullmatch(request_id) is None:
+                logger.warning(f"Ignored malformed X-Request-ID header of {len(request_id)} characters, generating one instead")
+                return None
+
+            return request_id
 
         return None

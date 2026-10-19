@@ -1,125 +1,77 @@
+import inspect
+import logging
 import sys
-import zipfile
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final
 
 from loguru import logger
 
 
-__all__: list[str] = ["configure_file_sink", "logger", "set_console_level"]
+__all__: list[str] = ["configure_logging", "logger"]
 
 
-_STDOUT_FORMAT: str = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <magenta>{extra[request_id]}</magenta> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
-_FILE_FORMAT: str = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | {name}:{function}:{line} - {message}"
-_ARCHIVE_RETENTION_DAYS: int = 14
 _LOG_DIRECTORY: Final[Path] = Path(__file__).resolve().parent.parent / "logs"
+_ARCHIVE_RETENTION_DAYS: Final[int] = 14
+_ROTATION_SIZE: Final[str] = "100 MB"
+_STDOUT_FORMAT: Final[str] = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <magenta>{extra[request_id]}</magenta> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
+)
+_FILE_FORMAT: Final[str] = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | {name}:{function}:{line} - {message}"
+_INTERCEPTED_LOGGER_NAMES: Final[tuple[str, ...]] = ("asyncio", "mcp", "uvicorn", "uvicorn.access", "uvicorn.error")
+_QUIETED_LOGGER_LEVELS: Final[dict[str, int]] = {"mcp.server.streamable_http": logging.WARNING}
+
+
+class _InterceptHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        frame, depth = inspect.currentframe(), 0
+        while frame is not None and (depth == 0 or frame.f_code.co_filename == logging.__file__):
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+
+def _add_console_sink(log_level: str) -> int:
+    return logger.add(sys.stdout, level=log_level, format=_STDOUT_FORMAT, colorize=True, enqueue=True, backtrace=True, diagnose=False)
+
+
+def _install_stdlib_intercept() -> None:
+    logging.basicConfig(handlers=[_InterceptHandler()], level=logging.NOTSET, force=True)
+    for intercepted_logger_name in _INTERCEPTED_LOGGER_NAMES:
+        intercepted_logger = logging.getLogger(intercepted_logger_name)
+        intercepted_logger.handlers.clear()
+        intercepted_logger.propagate = True
+
+    for quieted_logger_name, quieted_logger_level in _QUIETED_LOGGER_LEVELS.items():
+        logging.getLogger(quieted_logger_name).setLevel(quieted_logger_level)
 
 
 logger.remove()
 logger.configure(extra={"request_id": "-"})
-
-_console_sink_id: int = logger.add(
-    sys.stdout,
-    level="INFO",
-    format=_STDOUT_FORMAT,
-    colorize=True,
-    enqueue=True,
-    backtrace=True,
-    diagnose=True,
-)
+_console_sink_id: int = _add_console_sink("INFO")
+_install_stdlib_intercept()
 
 
-def _build_archive_path(log_file_path: Path) -> Path:
-    parent_directory = log_file_path.parent
-    base_stem = log_file_path.stem
-    suffix = log_file_path.suffix
+def configure_logging(log_level: str, should_serialize: bool, log_file_name: str = "mcp.log") -> None:
+    global _console_sink_id
+    logger.remove(_console_sink_id)
+    _console_sink_id = _add_console_sink(log_level)
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    candidate_path = parent_directory / f"{base_stem}.archive.{timestamp}{suffix}.zip"
-
-    collision_counter = 1
-    while candidate_path.exists():
-        candidate_path = parent_directory / f"{base_stem}.archive.{timestamp}_{collision_counter}{suffix}.zip"
-        collision_counter += 1
-
-    return candidate_path
-
-
-def _archive_existing_log(log_file_path: Path) -> None:
-    if not log_file_path.exists():
-        return
-
-    try:
-        if log_file_path.stat().st_size == 0:
-            log_file_path.unlink()
-            return
-
-        archive_path = _build_archive_path(log_file_path)
-        with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive_file:
-            archive_file.write(log_file_path, arcname=log_file_path.name)
-
-        log_file_path.unlink()
-        logger.info(f"Archived previous log file to {archive_path.name}")
-    except OSError as error:
-        logger.warning(f"Failed to archive log file {log_file_path}: {error}")
-
-
-def _purge_stale_archives(log_file_path: Path) -> None:
-    log_directory = log_file_path.parent
-    if not log_directory.exists():
-        return
-
-    expiration_threshold = datetime.now() - timedelta(days=_ARCHIVE_RETENTION_DAYS)
-    archive_pattern = f"{log_file_path.stem}.archive.*{log_file_path.suffix}.zip"
-
-    for archive_path in log_directory.glob(archive_pattern):
-        try:
-            modified_at = datetime.fromtimestamp(archive_path.stat().st_mtime)
-        except OSError as error:
-            logger.warning(f"Failed to stat archive {archive_path}: {error}")
-            continue
-
-        if modified_at >= expiration_threshold:
-            continue
-
-        try:
-            archive_path.unlink()
-            logger.debug(f"Removed stale log archive {archive_path.name}")
-        except OSError as error:
-            logger.warning(f"Failed to remove stale archive {archive_path}: {error}")
-
-
-def configure_file_sink(log_level: str = "DEBUG", serialize: bool = False) -> None:
     _LOG_DIRECTORY.mkdir(parents=True, exist_ok=True)
-    log_file_path = _LOG_DIRECTORY / "mcp.log"
-
-    _archive_existing_log(log_file_path)
-    _purge_stale_archives(log_file_path)
-
     logger.add(
-        log_file_path,
+        _LOG_DIRECTORY / log_file_name,
         level=log_level,
         format=_FILE_FORMAT,
-        serialize=serialize,
-        rotation="100 MB",
-        retention="14 days",
+        serialize=should_serialize,
+        rotation=_ROTATION_SIZE,
+        retention=f"{_ARCHIVE_RETENTION_DAYS} days",
         compression="zip",
         enqueue=True,
         backtrace=True,
-        diagnose=True,
-    )
-
-
-def set_console_level(log_level: str) -> None:
-    global _console_sink_id
-    logger.remove(_console_sink_id)
-    _console_sink_id = logger.add(
-        sys.stdout,
-        level=log_level,
-        format=_STDOUT_FORMAT,
-        colorize=True,
-        enqueue=True,
-        backtrace=True,
-        diagnose=True,
+        diagnose=False,
     )
