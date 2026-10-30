@@ -1,0 +1,28 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "launchOptions": {
+      "channel": "chrome",
+      "headless": false,
+      "chromiumSandbox": false,
+      "args": [
+        "--window-size=1920,1080",
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled",
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp"
+      ],
+      "ignoreDefaultArgs": [
+        "--enable-automation",
+        "--disable-extensions",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--disable-popup-blocking"
+      ]
+    },
+    "contextOptions": {
+      "viewport": null
+    }
+  },
+  "allowUnrestrictedFileAccess": true,
+  "outputDir": "/root/data/.playwright-cli"
+}
