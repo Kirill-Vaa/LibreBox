@@ -1,0 +1,71 @@
+server:
+  database:
+    path: /database/filebrowser.sqlite
+  cacheDir: /cache
+  cacheDirCleanup: true
+  sources:
+    - name: data
+      path: /srv
+      config:
+        defaultEnabled: true
+        defaultUserScope: /
+        defaultPermissions:
+          view: true
+          download: true
+          create: true
+          modify: true
+          delete: true
+          configured: true
+  logging:
+    - levels: "info|warning|error"
+      apiLevels: "warning|error"
+      noColors: true
+  maxArchiveSize: 100
+  numImageProcessors: 1
+  disablePreviewResize: true
+  disableTypeDetectionByHeader: true
+  disableUpdateCheck: true
+
+http:
+  port: 8080
+  baseURL: /files
+  trustProxyHeaders: true
+  disableRateLimit: true
+  disableWebDAV: true
+
+auth:
+  methods:
+    password:
+      enabled: false
+    proxy:
+      enabled: true
+      header: X-Auth-User
+      createUser: true
+      logoutRedirectUrl: /
+
+frontend:
+  name: LibreBox files
+  disableDefaultLinks: true
+
+userDefaults:
+  ui:
+    darkMode: true
+    themeColor: "var(--orange)"
+  sidebar:
+    disableQuickToggles: true
+  listing:
+    showHidden: true
+    hideFileExt: ".gitkeep"
+    quickDownload: true
+    deleteWithoutConfirming: true
+  fileViewer:
+    editorQuickSave: true
+  fileLoading:
+    maxConcurrentUpload: 100
+  account:
+    permissions:
+      admin: true
+      api: true
+      share: true
+      realtime: true
+    disableUpdateNotifications: true
