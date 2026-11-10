@@ -1,7 +1,76 @@
+include /etc/nginx/snippets/real-ip/${REAL_IP_PROVIDER}.conf;
+
+upstream admin-panel {
+    zone admin-panel 64k;
+    server admin-panel:3000 resolve;
+    keepalive 32;
+    keepalive_timeout 4s;
+}
+
+upstream auth-gate {
+    zone auth-gate 64k;
+    server auth-gate:8081 resolve;
+    keepalive 32;
+    keepalive_timeout 4s;
+}
+
+upstream browser-view {
+    zone browser-view 64k;
+    server browser-view:6080 resolve;
+    keepalive 0;
+}
+
+upstream filebrowser {
+    zone filebrowser 64k;
+    server filebrowser:8080 resolve;
+    keepalive 32;
+    keepalive_timeout 4s;
+}
+
+upstream librechat {
+    zone librechat 64k;
+    server librechat:3080 resolve;
+    keepalive 32;
+    keepalive_timeout 4s;
+}
+
+map $request_body $tts_request_body {
+    "~(?s)^\{(?<tts_rest>.*)$" '{"response_format":"mp3",$tts_rest';
+}
+
+server {
+    listen 8098;
+
+    location = /v1/audio/speech {
+        set $tts_upstream openrouter.ai;
+        proxy_pass https://$tts_upstream/api/v1/audio/speech;
+        proxy_ssl_server_name on;
+        proxy_set_header Host openrouter.ai;
+        proxy_set_body $tts_request_body;
+    }
+}
+
+server {
+    listen 127.0.0.1:8099;
+
+    access_log off;
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 404;
+    }
+}
+
 server {
     listen 80 default_server;
     listen 443 ssl default_server;
+
     ssl_reject_handshake on;
+
     return 444;
 }
 
@@ -11,7 +80,7 @@ server {
 
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/certbot;
-        default_type "text/plain";
+        default_type text/plain;
     }
 
     location / {
@@ -26,72 +95,192 @@ server {
 
     ssl_certificate     /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
-    include /etc/nginx/snippets/tls.conf;
 
+    include /etc/nginx/snippets/tls.conf;
     include /etc/nginx/snippets/security-headers.conf;
 
     limit_conn conn_per_ip 50;
+    limit_req zone=req_general burst=100 nodelay;
+
+    proxy_http_version 1.1;
+    include /etc/nginx/snippets/proxy-headers.conf;
+    include /etc/nginx/snippets/hide-upstream-security-headers.conf;
 
     location = /_auth {
         internal;
-        set $mcp_auth http://mcp:8081;
-        proxy_pass $mcp_auth/auth/validate;
-        proxy_pass_request_body off;
-        proxy_set_header Content-Length "";
-        proxy_set_header Cookie $http_cookie;
-    }
 
-    location /files/ {
-        limit_req zone=req_general burst=60 nodelay;
-        auth_request /_auth;
-        auth_request_set $auth_user $upstream_http_x_auth_user;
-        error_page 401 = @login;
-        set $filebrowser_upstream http://filebrowser:80;
-        proxy_pass $filebrowser_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Auth-User $auth_user;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass http://auth-gate/auth/validate;
+        proxy_pass_request_body off;
+        client_max_body_size 0;
+
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Original-URI $request_uri;
+
+        proxy_connect_timeout 5s;
+        proxy_send_timeout    5s;
+        proxy_read_timeout    5s;
     }
 
     location @login {
         return 302 /login;
     }
 
-    location /api/auth/ {
-        limit_req zone=req_login burst=10 nodelay;
-        set $librechat_upstream http://librechat:3080;
-        proxy_pass $librechat_upstream;
-        proxy_http_version 1.1;
+    location @auth_unavailable {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Retry-After 5 always;
+        default_type text/plain;
+        return 503 "LibreBox cannot verify your session right now, try again shortly\n";
+    }
+
+    location = /admin {
+        return 301 /admin/;
+    }
+
+    location /admin/ {
+        limit_req zone=req_admin burst=60 nodelay;
+        client_max_body_size 1m;
+
+        proxy_pass http://admin-panel;
+
+        include /etc/nginx/snippets/proxy-headers.conf;
+        proxy_set_header Connection "";
+
+        proxy_connect_timeout 5s;
+        proxy_send_timeout    5s;
+        proxy_read_timeout    5s;
+    }
+
+    location = /browser {
+        return 301 /browser/;
+    }
+
+    location /browser/ {
+        auth_request /_auth;
+        error_page 401 = @login;
+        error_page 500 = @auth_unavailable;
+
+        proxy_pass http://browser-view;
+        proxy_pass_request_headers off;
+
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_set_header Accept $http_accept;
+        proxy_set_header Accept-Encoding $http_accept_encoding;
+        proxy_set_header If-Modified-Since $http_if_modified_since;
+        proxy_set_header User-Agent $http_user_agent;
+
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Content-Security-Policy "default-src 'self'; script-src https://$http_host/browser/app/ https://$http_host/browser/core/ https://$http_host/browser/vendor/ 'sha256-/9PPJp0RDtPobChVxkPiMU+aOqJaic/KxxORSdYVFHE='; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'" always;
+    }
+
+    location = /browser/websockify {
+        limit_req zone=req_browser_ws burst=5 nodelay;
+        limit_conn conn_browser_ws 10;
+
+        if ($http_origin != "https://$http_host") {
+            return 403;
+        }
+
+        auth_request /_auth;
+        error_page 401 = @login;
+        error_page 500 = @auth_unavailable;
+
+        proxy_pass http://browser-view;
+        proxy_pass_request_headers off;
+
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Sec-WebSocket-Key $http_sec_websocket_key;
+        proxy_set_header Sec-WebSocket-Version $http_sec_websocket_version;
+        proxy_set_header Sec-WebSocket-Protocol $http_sec_websocket_protocol;
+        proxy_set_header Sec-WebSocket-Extensions $http_sec_websocket_extensions;
+
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location = /files {
+        return 301 /files/;
+    }
+
+    location /files/ {
+        client_max_body_size 10g;
+
+        auth_request /_auth;
+        auth_request_set $auth_user $upstream_http_x_auth_user;
+        error_page 401 = @login;
+        error_page 500 = @auth_unavailable;
+
+        proxy_pass http://filebrowser;
+
+        include /etc/nginx/snippets/proxy-headers.conf;
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Auth-User $auth_user;
+        proxy_set_header Cookie $filebrowser_cookie;
+        proxy_set_header Authorization "";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_hide_header Content-Security-Policy;
+        include /etc/nginx/snippets/hide-upstream-security-headers.conf;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Content-Security-Policy $filebrowser_csp always;
+
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+        proxy_request_buffering off;
+        proxy_buffering off;
     }
 
     location = /librebox/inject.js {
-        limit_req zone=req_general burst=60 nodelay;
         alias /etc/nginx/assets/inject.js;
+        expires 1h;
+    }
+
+    location ~* ^/api/auth/ {
+        limit_req zone=req_login burst=10 nodelay;
+        client_max_body_size 1m;
+
+        proxy_pass http://librechat;
+    }
+
+    location ~* ^/api/(files|convos/import|skills)(/|$) {
+        client_max_body_size 1000m;
+
+        proxy_pass http://librechat;
+
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_cache off;
+    }
+
+    location /assets/ {
+        proxy_pass http://librechat;
+
+        expires $librechat_asset_expires;
     }
 
     location / {
-        limit_req zone=req_general burst=100 nodelay;
-        set $librechat_upstream http://librechat:3080;
-        proxy_pass $librechat_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        client_body_buffer_size 1m;
+
+        proxy_pass http://librechat;
+
+        include /etc/nginx/snippets/proxy-headers.conf;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header Accept-Encoding "";
-        proxy_read_timeout 3600s;
+
         proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
         proxy_buffering off;
         proxy_cache off;
-        sub_filter_once on;
+
         sub_filter "</head>" "<script src=\"/librebox/inject.js\" defer></script></head>";
+        sub_filter_once on;
     }
 }
