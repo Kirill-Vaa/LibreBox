@@ -1,34 +1,45 @@
 name: libre-box
 
+x-healthcheck: &default-healthcheck
+  interval: 15s
+  timeout: 5s
+  retries: 10
+  start_period: 20s
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   mongodb:
-    image: mongo@sha256:b8806ee8207318a30316eca72257da4c146025a80fdcdb4c597e596af9233ee3
+    image: mongo:9.0
     container_name: libre-box-mongodb
-    command: ["--auth", "--wiredTigerCacheSizeGB", "0.5"]
+    command: ["--auth", "--wiredTigerCacheSizeGB", "0.25"]
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGODB_PASSWORD}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGODB_USER}
     volumes:
       - mongo_data:/data/db
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     networks:
       - data_mongo
     stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 512M
+          pids: 256
 
   librechat:
-    image: ghcr.io/danny-avila/librechat:v0.8.8-rc4
+    image: librechat/librechat:v0.8.9-rc1
     container_name: libre-box-librechat
     depends_on:
       mongodb:
@@ -36,8 +47,26 @@ services:
     env_file:
       - ./librechat/.env
     environment:
+      ADMIN_PANEL_SESSION_SECRET: ${ADMIN_PANEL_SESSION_SECRET}
+      ADMIN_PANEL_URL: https://${DOMAIN}/admin
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-user_provided}
+      CREDS_IV: ${CREDS_IV}
+      CREDS_KEY: ${CREDS_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-user_provided}
+      DOMAIN_CLIENT: https://${DOMAIN}
+      DOMAIN_SERVER: https://${DOMAIN}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-user_provided}
+      GOOGLE_KEY: ${GOOGLE_API_KEY:-user_provided}
+      GROQ_API_KEY: ${GROQ_API_KEY:-user_provided}
+      IMAGE_GEN_OAI_API_KEY: ${OPENAI_API_KEY:-user_provided}
+      JINA_API_KEY: ${JINA_API_KEY:-user_provided}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
       MONGO_URI: mongodb://${MONGODB_USER}:${MONGODB_PASSWORD}@mongodb:27017/LibreChat?authSource=admin
-      NODE_OPTIONS: "--max-old-space-size=768"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-user_provided}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-user_provided}
+      SERPER_API_KEY: ${SERPER_API_KEY:-user_provided}
+      XAI_API_KEY: ${XAI_API_KEY:-user_provided}
     volumes:
       - ./librechat/librechat.yaml:/app/librechat.yaml:ro
       - ./librechat/plugins:/app/plugins:ro
@@ -45,27 +74,308 @@ services:
       - librechat_images:/app/client/public/images
       - librechat_uploads:/app/uploads
       - ./logs/librechat:/app/logs
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3080/readyz || exit 1"]
+      start_period: 60s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     networks:
-      - edge
+      - admin_api
       - app
       - data_mongo
+      - edge
     stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 1G
+          pids: 512
+
+  egress:
+    image: libre-box-egress:local
+    build:
+      context: ./services/egress
+      dockerfile: Dockerfile
+    container_name: libre-box-egress
+    environment:
+      EGRESS_ALLOW_CIDRS: ${EGRESS_ALLOW_CIDRS:-}
+      EGRESS_BLOCK_CIDRS: ${EGRESS_BLOCK_CIDRS:-}
+      EGRESS_INNER_IP: 10.88.0.2
+      SANDBOX_GATEWAY_IP: 10.88.0.1
+      SANDBOX_SUBNET: 10.88.0.0/24
+      UPSTREAM_GATEWAY_IP: 10.88.1.1
+    tmpfs:
+      - /run
+    sysctls:
+      net.ipv4.conf.all.accept_redirects: "0"
+      net.ipv4.conf.all.send_redirects: "0"
+      net.ipv4.ip_forward: "1"
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - KILL
+      - NET_ADMIN
+      - NET_BIND_SERVICE
+      - NET_RAW
+      - SETGID
+      - SETUID
+    networks:
+      egress_wan:
+        ipv4_address: 10.88.1.3
+      sandbox_net:
+        ipv4_address: 10.88.0.2
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          pids: 64
+
+  sandbox:
+    image: libre-box-sandbox:${SANDBOX_TARGET:-standard}
+    build:
+      context: ./services/sandbox
+      dockerfile: Dockerfile
+      target: ${SANDBOX_TARGET:-standard}
+    container_name: libre-box-sandbox
+    environment:
+      MAKEFLAGS: -j${SANDBOX_CPU_LIMIT:-4}
+      OMP_NUM_THREADS: ${SANDBOX_CPU_LIMIT:-4}
+    depends_on:
+      egress:
+        condition: service_healthy
+    volumes:
+      - ./data:/root/data
+      - x11_socket:/tmp/.X11-unix
+    shm_size: ${SANDBOX_SHM_SIZE:-1gb}
+    dns:
+      - 10.88.0.1
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_PTRACE
+    networks:
+      sandbox_net:
+        ipv4_address: 10.88.0.10
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: ${SANDBOX_CPU_LIMIT:-4}
+          memory: ${SANDBOX_MEMORY_LIMIT:-8G}
+          pids: ${SANDBOX_PIDS_LIMIT:-4096}
+
+  browser-view:
+    image: libre-box-browser-view:local
+    build:
+      context: ./services/browser-view
+      dockerfile: Dockerfile
+    container_name: libre-box-browser-view
+    volumes:
+      - x11_socket:/tmp/.X11-unix:ro
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - edge_browser
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          pids: 128
+
+  docker-socket-proxy:
+    image: libre-box-docker-proxy:local
+    build:
+      context: ./services/mcp
+      dockerfile: Dockerfile
+      target: socket-proxy
+    container_name: libre-box-docker-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - socket
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          pids: 64
+
+  mcp:
+    image: libre-box-mcp:local
+    build:
+      context: ./services/mcp
+      dockerfile: Dockerfile
+      target: mcp
+    container_name: libre-box-mcp
+    depends_on:
+      docker-socket-proxy:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+    environment:
+      DEFAULT_COMMAND_TIMEOUT_SECONDS: ${DEFAULT_COMMAND_TIMEOUT_SECONDS:-600}
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      EGRESS_ALLOW_CIDRS: ${EGRESS_ALLOW_CIDRS:-}
+      EGRESS_BLOCK_CIDRS: ${EGRESS_BLOCK_CIDRS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_SERIALIZE: ${LOG_SERIALIZE:-true}
+      OUTPUT_CHAR_LIMIT: ${OUTPUT_CHAR_LIMIT:-100000}
+    volumes:
+      - ./data:/root/data
+      - ./logs/mcp:/app/logs
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    networks:
+      - app
+      - socket
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          pids: 256
+
+  auth-gate:
+    image: libre-box-auth-gate:local
+    build:
+      context: ./services/mcp
+      dockerfile: Dockerfile
+      target: auth-gate
+    container_name: libre-box-auth-gate
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_SERIALIZE: ${LOG_SERIALIZE:-true}
+      MONGO_URI: mongodb://${MONGODB_USER}:${MONGODB_PASSWORD}@mongodb:27017/LibreChat?authSource=admin
+    volumes:
+      - ./logs/auth-gate:/app/logs
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - data_mongo
+      - edge_auth
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          pids: 128
+
+  admin-panel:
+    image: libre-box-admin-panel:local
+    build:
+      context: https://github.com/LibreChat-AI/admin-panel.git#main
+      args:
+        VITE_BASE_PATH: /admin
+    container_name: libre-box-admin-panel
+    depends_on:
+      librechat:
+        condition: service_healthy
+    environment:
+      API_SERVER_URL: http://librechat:3080
+      SESSION_SECRET: ${ADMIN_PANEL_SESSION_SECRET}
+      VITE_API_BASE_URL: https://${DOMAIN}
+      VITE_BASE_PATH: /admin
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - admin_api
+      - edge_admin
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          pids: 128
+
+  filebrowser:
+    image: gtstef/filebrowser:latest
+    container_name: libre-box-filebrowser
+    user: "0:0"
+    environment:
+      FILEBROWSER_CONFIG: /config/config.yaml
+    volumes:
+      - ./data:/srv
+      - ./services/filebrowser/config.yaml:/config/config.yaml:ro
+      - filebrowser_db:/database
+      - filebrowser_cache:/cache
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/files/health || exit 1"]
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    networks:
+      - edge_files
+    stop_grace_period: 30s
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          pids: 256
 
   nginx:
     image: nginx:alpine
     container_name: libre-box-nginx
     depends_on:
-      - librechat
+      librechat:
+        condition: service_healthy
     environment:
       DOMAIN: ${DOMAIN}
-      NGINX_ENVSUBST_FILTER: "^DOMAIN$$"
+      NGINX_ENVSUBST_FILTER: ^(DOMAIN|REAL_IP_PROVIDER)$$
+      REAL_IP_PROVIDER: ${REAL_IP_PROVIDER:-none}
     ports:
       - "80:80"
       - "443:443"
@@ -74,9 +384,13 @@ services:
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
       - ./nginx/assets:/etc/nginx/assets:ro
+      - ./nginx/docker-entrypoint.d/40-reload-on-cert-change.sh:/docker-entrypoint.d/40-reload-on-cert-change.sh:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/certbot:/var/www/certbot:ro
       - ./logs/nginx:/var/log/nginx
+    healthcheck:
+      <<: *default-healthcheck
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8099/healthz || exit 1"]
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -84,186 +398,121 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - DAC_OVERRIDE
       - NET_BIND_SERVICE
       - SETGID
       - SETUID
     networks:
       - edge
+      - edge_admin
       - edge_auth
+      - edge_browser
       - edge_files
     stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 256M
+          pids: 128
 
-  sandbox:
-    build:
-      context: ./services/sandbox
-      dockerfile: Dockerfile
-    platform: linux/amd64
-    container_name: libre-box-sandbox
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-      - SYS_PTRACE
-    volumes:
-      - ./data:/root/data
-    restart: unless-stopped
-    networks:
-      - sandbox_net
-    stop_grace_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-          cpus: "4"
-          pids: 4096
-
-  docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: libre-box-docker-proxy
+  certbot:
+    image: certbot/certbot:latest
+    container_name: libre-box-certbot
+    profiles:
+      - certbot
+    entrypoint: ["/bin/sh", "/usr/local/bin/entrypoint.sh"]
+    command: ["renew-loop"]
     environment:
-      CONTAINERS: 1
-      EXEC: 1
-      INFO: 1
-      PING: 1
-      POST: 1
-      VERSION: 1
-      IMAGES: 0
-      NETWORKS: 0
-      VOLUMES: 0
-      SERVICES: 0
-      SWARM: 0
-      TASKS: 0
+      DOMAIN: ${DOMAIN}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    read_only: true
+      - ./services/certbot/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+      - ./nginx/certs:/etc/nginx/certs
+      - ./nginx/certbot:/var/www/certbot
+      - certbot_letsencrypt:/etc/letsencrypt
     tmpfs:
-      - /run
       - /tmp
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - socket
-    stop_grace_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-
-  mcp:
-    build:
-      context: ./services/mcp
-      dockerfile: Dockerfile
-    container_name: libre-box-mcp
-    depends_on:
-      sandbox:
-        condition: service_healthy
-      docker-socket-proxy:
-        condition: service_started
-    env_file:
-      - ./.env
-      - ./librechat/.env
-    environment:
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
-    volumes:
-      - ./data:/root/data
-      - ./logs/mcp:/app/logs
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    networks:
-      - edge_auth
-      - app
-      - socket
-    stop_grace_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-
-  filebrowser:
-    image: filebrowser/filebrowser:latest
-    container_name: libre-box-filebrowser
-    entrypoint: ["/bin/sh", "/init.sh"]
-    user: "0:0"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/files/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-    volumes:
-      - ./data:/srv
-      - ./services/filebrowser/init.sh:/init.sh:ro
-      - filebrowser_db:/database
+      - /var/lib/letsencrypt
+      - /var/log/letsencrypt
+    read_only: true
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     cap_add:
+      - CHOWN
       - DAC_OVERRIDE
-      - NET_BIND_SERVICE
+      - FOWNER
     networks:
-      - edge_files
+      - edge
     stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 256M
-
-  playwright:
-    image: mcr.microsoft.com/playwright/mcp:latest
-    container_name: libre-box-playwright
-    command: ["--headless", "--browser", "chromium", "--no-sandbox", "--isolated", "--port", "8931", "--host", "0.0.0.0", "--allowed-hosts", "playwright:8931", "--allow-unrestricted-file-access", "--output-dir", "/home/node/data/.playwright"]
-    working_dir: /home/node/data
-    environment:
-      PLAYWRIGHT_MCP_PING_TIMEOUT_MS: "60000"
-    volumes:
-      - ./data:/home/node/data
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - app
-      - sandbox_net
-    stop_grace_period: 30s
-    deploy:
-      resources:
-        limits:
-          memory: 1G
+          pids: 128
 
 volumes:
-  mongo_data:
+  certbot_letsencrypt:
+    driver: local
+  filebrowser_cache:
+    driver: local
+  filebrowser_db:
     driver: local
   librechat_images:
     driver: local
   librechat_uploads:
     driver: local
-  filebrowser_db:
+  mongo_data:
     driver: local
+  x11_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,mode=1777
 
 networks:
+  admin_api:
+    driver: bridge
+    internal: true
+  app:
+    driver: bridge
+    internal: true
+  data_mongo:
+    driver: bridge
+    internal: true
   edge:
     driver: bridge
+  edge_admin:
+    driver: bridge
+    internal: true
   edge_auth:
+    driver: bridge
+    internal: true
+  edge_browser:
     driver: bridge
     internal: true
   edge_files:
     driver: bridge
     internal: true
-  app:
+  egress_wan:
     driver: bridge
-  data_mongo:
+    ipam:
+      config:
+        - gateway: 10.88.1.1
+          subnet: 10.88.1.0/24
+  sandbox_net:
     driver: bridge
-    internal: true
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+      com.docker.network.bridge.inhibit_ipv4: "true"
+    ipam:
+      config:
+        - gateway: 10.88.0.1
+          subnet: 10.88.0.0/24
   socket:
     driver: bridge
     internal: true
-  sandbox_net:
-    driver: bridge

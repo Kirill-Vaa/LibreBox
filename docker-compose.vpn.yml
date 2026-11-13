@@ -1,45 +1,54 @@
+x-healthcheck: &default-healthcheck
+  interval: 15s
+  timeout: 5s
+  retries: 10
+  start_period: 20s
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   vpn:
     image: qmcgaw/gluetun:latest
     container_name: libre-box-vpn
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
     environment:
+      DNS_KEEP_NAMESERVER: "off"
+      FIREWALL: "on"
+      FIREWALL_OUTBOUND_SUBNETS: 10.88.1.0/24
       VPN_SERVICE_PROVIDER: custom
       VPN_TYPE: wireguard
-      FIREWALL: "on"
-      FIREWALL_INPUT_PORTS: "8931"
     volumes:
       - ./vpn/wg0.conf:/gluetun/wireguard/wg0.conf:ro
+      - ./vpn/post-rules.txt:/iptables/post-rules.txt:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      net.ipv4.ip_forward: "1"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "https://ifconfig.me"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+      <<: *default-healthcheck
+      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
+      start_period: 2m
     restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
     networks:
-      app:
-        aliases:
-          - playwright
+      egress_wan:
+        ipv4_address: 10.88.1.2
     stop_grace_period: 30s
+    logging: *default-logging
     deploy:
       resources:
         limits:
           memory: 512M
+          pids: 256
 
-  sandbox:
-    networks: !reset null
-    network_mode: "service:vpn"
+  egress:
     depends_on:
       vpn:
         condition: service_healthy
-
-  playwright:
-    networks: !reset null
-    network_mode: "service:vpn"
-    depends_on:
-      vpn:
-        condition: service_healthy
+    environment:
+      UPSTREAM_DNS: 1.1.1.1,1.0.0.1
+      UPSTREAM_GATEWAY_IP: 10.88.1.2
