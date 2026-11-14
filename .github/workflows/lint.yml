@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "services/mcp/**"
+      - "services/sandbox/**"
       - ".github/workflows/lint.yml"
   pull_request:
     paths:
       - "services/mcp/**"
+      - "services/sandbox/**"
       - ".github/workflows/lint.yml"
   workflow_dispatch:
 
@@ -20,7 +22,7 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  python:
     name: ruff + mypy
     runs-on: ubuntu-latest
     defaults:
@@ -30,10 +32,10 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v7
 
-      - name: Set up uv and Python 3.13
+      - name: Set up uv and Python 3.14
         uses: astral-sh/setup-uv@v10.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.14"
           working-directory: services/mcp
           enable-cache: true
 
@@ -41,8 +43,21 @@ jobs:
         run: uv sync --group dev
 
       - name: Run ruff
-        run: uv run ruff check --output-format=github .
+        run: uv run ruff check --config pyproject.toml --output-format=github . ../sandbox/inventory.py
 
       - name: Run mypy
         if: ${{ !cancelled() }}
-        run: uv run mypy .
+        run: uv run mypy . ../sandbox/inventory.py
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/sandbox
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Run shellcheck
+        run: shellcheck -x -P scripts/lib -e SC1091,SC2016,SC2154,SC2317,SC2329 resolve-versions.sh prepare-steps.sh finalize-image.sh entrypoint.sh scripts/*/*.sh
