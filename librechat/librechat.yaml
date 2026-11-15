@@ -1,201 +1,209 @@
-version: 1.3.17
-cache: true
-
-secureImageLinks: true
-
-webSearch:
-  searchProvider: "serper"
-  serperApiKey: "${SERPER_API_KEY}"
-
-  scraperProvider: "firecrawl"
-  firecrawlApiKey: "${FIRECRAWL_API_KEY}"
-  firecrawlVersion: "${FIRECRAWL_VERSION}"
-
-  rerankerType: "jina"
-  jinaApiKey: "${JINA_API_KEY}"
-
-  safeSearch: 0
-
-fileConfig:
-  serverFileSizeLimit: 1000
-  avatarSizeLimit: 10
-  fileContextSizeLimit: 16
-  fileContextCharLimit: 1000000
-  endpoints:
-    agents:
-      fileLimit: 100000
-
-rateLimits:
-  fileUploads:
-    ipMax: 1000
-    ipWindowInMinutes: 1
-    userMax: 1000
-    userWindowInMinutes: 1
-  conversationsImport:
-    ipMax: 1000
-    ipWindowInMinutes: 1
-    userMax: 1000
-    userWindowInMinutes: 1
-  stt:
-    ipMax: 1000
-    ipWindowInMinutes: 1
-    userMax: 1000
-    userWindowInMinutes: 1
-  tts:
-    ipMax: 1000
-    ipWindowInMinutes: 1
-    userMax: 1000
-    userWindowInMinutes: 1
-
-memory:
-  disabled: true
-
-summarization:
-  provider: "OpenRouter"
-  model: "anthropic/claude-sonnet-5"
-  maxSummaryTokens: 32768
-  reserveRatio: 0.05
-  trigger:
-    type: "token_ratio"
-    value: 0.95
+version: 1.3.18
 
 interface:
-  mcpServers:
-    use: true
-    create: false
-    share: false
-    public: false
-    configureObo: true
-    toolsRefreshInterval: 30000
-    statusRefreshInterval: 30000
-  schedules:
-    use: true
-    create: true
-    maxPerUser: 100000
-    minIntervalMinutes: 1
-    autoDisableAfterFailures: 5
-    fireConcurrency: 5
-    requireProject: false
-  prompts:
-    use: true
-    create: true
-    share: false
-    public: false
-  agents:
-    use: true
-    create: true
-    share: false
-    public: false
-  skills:
-    use: true
-    create: true
-    share: false
-    public: false
+  customWelcome: 'Welcome to LibreBox! Enjoy!'
+  landingFooter: false
+  buildInfo: false
+
+  runCode: false
+  contextCost: true
+  feedback: false
   marketplace:
     use: false
-
-  modelSelect: true
-  contextCost: true
-
-  bookmarks: false
-  memories: false
-  feedback: false
-
-  temporaryChatRetention: 1
-  runCode: false
-
+  mcpServers:
+    configureObo: true
+  remoteAgents:
+    use: true
+    create: true
+  schedules:
+    use: true
+    maxPerUser: 999999
+    minIntervalMinutes: 1
   defaultPinnedTools:
-    - artifacts
-    - web_search
+    - 'artifacts'
+    - 'web_search'
+    - 'skills'
+    - 'mcp'
 
-endpoints:
-  all:
-    titleConvo: true
-    titleTiming: "immediate"
-    maxToolResultChars: 100000
+  historyCacheTtlMs: 600000
+  replyNotifications:
+    pollIntervalMs: 10000
+  temporaryChatRetention: 24
 
-  # anthropic:
-  #   apiKey: "${ANTHROPIC_API_KEY}"
-  #   titleModel: "claude-haiku-4-5-20251001"
-  # google:
-  #   apiKey: "${GOOGLE_KEY}"
-  #   titleModel: "gemini-2.5-flash"
-  # openAI:
-  #   apiKey: "${OPENAI_API_KEY}"
-  #   titleModel: "gpt-4o-mini"
+projects:
+  maxFiles: 500
+  maxDescriptionLength: 10000
+  maxInstructionsLength: 200000
 
-  custom:
-    - name: "OpenRouter"
-      apiKey: "${OPENROUTER_API_KEY}"
-      baseURL: "https://openrouter.ai/api/v1"
-      models:
-        default:
-          - "openai/gpt-4o-mini"
-        fetch: true
-      titleModel: "openai/gpt-4o-mini"
-      modelDisplayLabel: "OpenRouter"
-    # - name: "xai"
-    #   apiKey: "${XAI_API_KEY}"
-    #   baseURL: "https://api.x.ai/v1"
-    #   models:
-    #     default:
-    #       - "grok-4.5"
-    #     fetch: true
-    #   titleModel: "grok-4.20-0309-non-reasoning"
-    #   modelDisplayLabel: "Grok"
+speech:
+  tts:
+    allowedAddresses:
+      - 'nginx:8098'
+    openai:
+      url: 'http://nginx:8098/v1/audio/speech'
+      apiKey: '${OPENROUTER_API_KEY}'
+      model: 'x-ai/grok-voice-tts-1.0'
+      voices:
+        - 'ara'
+        - 'eve'
+        - 'leo'
+        - 'rex'
+        - 'sal'
+  stt:
+    openai:
+      url: 'https://api.groq.com/openai/v1/audio/transcriptions'
+      apiKey: '${GROQ_API_KEY}'
+      model: 'whisper-large-v3-turbo'
 
-  agents:
-    recursionLimit: 500
-    maxRecursionLimit: 100000
-    maxSubagents: 50
-    allowedProviders:
-      # - "anthropic"
-      # - "google"
-      # - "openAI"
-      - "OpenRouter"
-      # - "xai"
-    askUserQuestion:
-      retainedAnswers:
-        enabled: false
-    capabilities:
-      - "actions"
-      - "artifacts"
-      - "ask_user_question"
-      - "chain"
-      - "context"
-      - "deferred_tools"
-      - "memory"
-      - "ocr"
-      - "programmatic_tools"
-      - "skills"
-      - "subagents"
-      - "tool_intents"
-      - "tools"
-      - "web_search"
-    skills:
-      maxCatalogSkills: 100
-    subagents:
-      enabled: true
-      allowSelf: true
+  speechTab:
+    advancedMode: true
 
 mcpSettings:
   allowedAddresses:
-    - "mcp:8080"
-    - "playwright:8931"
-    - "connect.composio.dev:443"
+    - 'mcp:8080'
 
 mcpServers:
   LibreBoxMCP:
-    type: streamable-http
-    url: http://mcp:8080/mcp
+    type: 'streamable-http'
+    url: 'http://mcp:8080/mcp'
+    title: 'Sandbox'
+    description: 'Core LibreBox server. Sandbox for shell, files, and background processes.'
+    serverInstructions: true
     timeout: 86400000
 
-  Playwright:
-    type: streamable-http
-    url: http://playwright:8931/mcp
-
   Composio:
-    type: streamable-http
-    url: https://connect.composio.dev/mcp
-    headers:
-      x-consumer-api-key: "${COMPOSIO_API_KEY}"
+    type: 'streamable-http'
+    url: 'https://connect.composio.dev/mcp'
+    title: 'Composio'
+    description: 'Gateway to third-party applications and APIs. Executes authenticated actions in connected external services.'
+    requiresOAuth: true
+    serverInstructions: true
+    timeout: 86400000
+
+rateLimits:
+  mcpApps:
+    resourcesPerMinute: 1000
+    toolCallsPerMinute: 1000
+
+endpoints:
+  anthropic:
+    titleModel: 'claude-haiku-4-5-20251001'
+  openAI:
+    titleModel: 'gpt-4o-mini'
+  google:
+    titleModel: 'gemini-2.5-flash'
+
+  agents:
+    recursionLimit: 999999
+    maxRecursionLimit: 999999
+    maxToolCallArgBytes: 0
+    maxSubagents: 50
+    maxCitations: 50
+    maxCitationsPerFile: 10
+
+    allowedProviders:
+      - 'anthropic'
+      - 'openAI'
+      - 'google'
+      - 'Deepseek'
+      - 'Groq'
+      - 'OpenRouter'
+      - 'xAI'
+
+    capabilities:
+      - 'actions'
+      - 'artifacts'
+      - 'ask_user_question'
+      - 'context'
+      - 'deferred_tools'
+      - 'end_after_tools'
+      - 'hide_sequential_outputs'
+      - 'memory'
+      - 'run_in_background'
+      - 'skills'
+      - 'subagents'
+      - 'tool_intents'
+      - 'tools'
+      - 'web_search'
+
+    skills:
+      maxCatalogSkills: 100
+
+  custom:
+    - name: 'Deepseek'
+      apiKey: '${DEEPSEEK_API_KEY}'
+      baseURL: 'https://api.deepseek.com/v1'
+      models:
+        default: ['deepseek-flash']
+        fetch: true
+      titleModel: 'deepseek-flash'
+      modelDisplayLabel: 'Deepseek'
+      customParams:
+        includeReasoningContent: true
+        includeReasoningHistory: true
+    - name: 'Groq'
+      apiKey: '${GROQ_API_KEY}'
+      baseURL: 'https://api.groq.com/openai/v1'
+      models:
+        default: ['openai/gpt-oss-20b']
+        fetch: true
+      titleModel: 'openai/gpt-oss-20b'
+      modelDisplayLabel: 'Groq'
+      customParams:
+        includeReasoningContent: true
+        includeReasoningHistory: true
+    - name: 'OpenRouter'
+      apiKey: '${OPENROUTER_API_KEY}'
+      baseURL: 'https://openrouter.ai/api/v1'
+      models:
+        default: ['deepseek/deepseek-v4.1-flash']
+        fetch: true
+      titleModel: 'deepseek/deepseek-v4.1-flash'
+      modelDisplayLabel: 'OpenRouter'
+      dropParams: ['stop']
+      customParams:
+        includeReasoningContent: true
+        includeReasoningHistory: true
+    - name: 'xAI'
+      apiKey: '${XAI_API_KEY}'
+      baseURL: 'https://api.x.ai/v1'
+      models:
+        default: ['grok-4.3']
+        fetch: true
+      titleModel: 'grok-4.3'
+      modelDisplayLabel: 'Grok'
+      customParams:
+        includeReasoningContent: true
+        includeReasoningHistory: true
+
+memory:
+  validKeys:
+    - 'identity'
+    - 'preferences'
+    - 'work_info'
+    - 'tech_stack'
+    - 'skills'
+    - 'goals'
+    - 'interests'
+    - 'constraints'
+    - 'context'
+
+summarization:
+  trigger:
+    type: 'token_ratio'
+    value: 0.95
+
+  reserveRatio: 0.05
+  maxSummaryTokens: 16384
+
+webSearch:
+  searchProvider: 'serper'
+  scraperProvider: 'firecrawl'
+  rerankerType: 'jina'
+
+  serperApiKey: '${SERPER_API_KEY}'
+  firecrawlApiKey: '${FIRECRAWL_API_KEY}'
+  firecrawlVersion: '${FIRECRAWL_VERSION}'
+  jinaApiKey: '${JINA_API_KEY}'
+
+  safeSearch: 0
