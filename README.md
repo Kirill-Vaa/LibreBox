@@ -1,697 +1,733 @@
-# Libre Box
+# LibreBox
 
-**A self-hosted, security-hardened [LibreChat](https://github.com/danny-avila/LibreChat) stack that gives your AI agents a real Linux computer.**
+[![Lint](https://github.com/Kirill-Vaa/LibreBox/actions/workflows/lint.yml/badge.svg)](https://github.com/Kirill-Vaa/LibreBox/actions/workflows/lint.yml)
+[![mypy: strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org)
+[![LibreChat version](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FKirill-Vaa%2FLibreBox%2Fmain%2Fdocker-compose.yml&search=librechat%3A%28v%5B0-9a-z.-%5D%2B%29&replace=%241&label=LibreChat&color=blue)](https://github.com/LibreChat-AI/LibreChat/releases)
+[![Sandbox base image](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FKirill-Vaa%2FLibreBox%2Fmain%2Fservices%2Fsandbox%2FDockerfile&search=ubuntu%3A%28%5B0-9.%5D%2B%29&replace=Ubuntu%20%241&label=sandbox&logo=ubuntu&logoColor=white&color=E95420)](#sandbox-image)
+[![Python version](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FKirill-Vaa%2FLibreBox%2Fmain%2Fservices%2Fmcp%2Fpyproject.toml&search=requires-python%20%3D%20%22%3E%3D%28%5B0-9.%5D%2B%29%22&replace=%241&label=python&logo=python&logoColor=white&color=3776AB)](#development)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Libre Box is a single–`docker compose` deployment that wraps LibreChat with a reverse proxy, browser automation, a web file manager, and — its centerpiece — a custom **Model Context Protocol (MCP) server** written in Python 3.13. That MCP server exposes shell, interactive sessions, background processes, and file operations backed by a heavyweight, fully-provisioned Ubuntu **sandbox** container. From any LibreChat conversation or agent, the model gets a genuine, persistent workstation preloaded with a vast development and security toolchain.
+Give your AI agents their own computer. LibreBox runs [LibreChat](https://librechat.ai) on your machine and connects its agents to an Ubuntu sandbox. Through 17 MCP tools, the agents work there as root, keep servers and long jobs running in the background and save their results to a file manager in the LibreChat sidebar. When an agent opens a web page, you watch its Chrome window live and can take over to sign in or solve a captcha. The default image comes with about 200 tools and libraries, from Go, Python and Rust to the AWS CLI, ffmpeg and pandoc, and the `full` image adds about 150 more, including LibreOffice, Metasploit and PyTorch.
 
-<p>
-  <a href="https://github.com/Kirill-Vaa/Libre-Box/actions/workflows/lint.yml"><img alt="Lint" src="https://github.com/Kirill-Vaa/Libre-Box/actions/workflows/lint.yml/badge.svg?branch=main"></a>
-  <img alt="Base Ubuntu 24.04" src="https://img.shields.io/badge/base-Ubuntu%2024.04-E95420?logo=ubuntu&logoColor=white">
-  <img alt="Language Python 3.13" src="https://img.shields.io/badge/language-Python%203.13-3776AB?logo=python&logoColor=white">
-  <img alt="Protocol MCP" src="https://img.shields.io/badge/protocol-MCP-6E56CF?logo=modelcontextprotocol&logoColor=white">
-  <img alt="Runtime Docker Compose v2" src="https://img.shields.io/badge/runtime-Docker%20Compose%20v2-2496ED?logo=docker&logoColor=white">
-  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-3DA639?logo=opensourceinitiative&logoColor=white">
-</p>
+<!-- Demo 1 -->
 
----
+Two things to know before you start:
 
-## Table of Contents
+- The sandbox is isolated from your machine. It is a separate container that shares only the `data/` folder with the host and, by default, reaches only the public internet (see [What keeps the sandbox contained](#what-keeps-the-sandbox-contained)).
+- LibreBox is meant for one person. All accounts share the same sandbox, files and browser (see [What LibreBox does not isolate](#what-librebox-does-not-isolate)).
 
-- [Why Libre Box](#why-libre-box)
-- [Architecture](#architecture)
-  - [Services](#services)
-  - [Network segmentation](#network-segmentation)
-  - [Request & authentication flow](#request--authentication-flow)
-  - [Where code actually runs](#where-code-actually-runs)
-- [The MCP server](#the-mcp-server)
-  - [Tool reference](#tool-reference)
-- [The sandbox](#the-sandbox)
-  - [Pinned versions](#pinned-versions)
-  - [What is installed](#what-is-installed)
-- [The agent prompt](#the-agent-prompt)
-  - [Using and adapting it](#using-and-adapting-it)
-- [Security model](#security-model)
-- [Prerequisites](#prerequisites)
-- [Quick start (local development)](#quick-start-local-development)
-- [Production deployment](#production-deployment)
-- [Configuration reference](#configuration-reference)
-  - [Root `.env`](#root-env)
-  - [`librechat/.env`](#librechatenv)
-  - [`librechat/librechat.yaml`](#librechatlibrechatyaml)
-  - [Deployment plugins and skills](#deployment-plugins-and-skills)
-  - [Adding a model provider endpoint](#adding-a-model-provider-endpoint)
-- [VPN egress (optional)](#vpn-egress-optional)
-- [Using Libre Box](#using-libre-box)
-- [Operations (Makefile)](#operations-makefile)
-  - [Stack lifecycle and status](#stack-lifecycle-and-status)
-  - [Sandbox and MCP containers](#sandbox-and-mcp-containers)
-  - [Diagnostics and cleanup](#diagnostics-and-cleanup)
-- [Troubleshooting](#troubleshooting)
-- [Acknowledgements](#acknowledgements)
+## What you get
 
----
+### An Ubuntu sandbox that keeps its state
 
-## Why Libre Box
+The agent runs commands with `bash -lc` as root in an Ubuntu 26.04 container and installs whatever else it needs. Servers, builds and downloads run as background jobs that keep going after the agent's turn ends, and the agent can read their logs later. The sandbox has no cron, Docker daemon or running systemd, so background jobs take the place of services.
 
-Most self-hosted chat UIs stop at text. Libre Box is built for **agentic** work — the model doesn't just talk about running a command, it runs it, on a machine that persists state across turns:
+The agent's workspace, `/root/data`, is the `data/` folder of your checkout, so its files survive when the container is recreated. Packages installed anywhere else last only until then. The image comes in three sizes, called tiers, from about 3 GB to about 42 GB (see [Sandbox image](#sandbox-image)).
 
-- **A real computer, not a toy REPL.** Agents get `bash`, interactive TTY sessions, detached background processes, and a full filesystem — all inside an isolated container.
-- **Batteries wildly included.** The sandbox ships dozens of languages and runtimes, a complete data/ML Python stack, document and media pipelines, database and cloud clients, and an extensive security toolkit.
-- **Opinionated out of the box.** A production-grade [example system prompt](#the-agent-prompt) ships with the stack, so the agent actually *uses* the machine — topic-scoped workspaces, background jobs, resumable work, results handed back as links, and a clear approval line at the sandbox edge.
-- **Hardened by default.** TLS everywhere, segmented internal networks, dropped Linux capabilities, a read-only Docker-socket proxy, workspace path-traversal guards, rate limiting, and single-sign-on between LibreChat and the file manager.
-- **Composable.** Browser automation (Playwright) and hosted integrations (Composio) are wired in as first-class MCP servers alongside LibreChat's own web search, artifacts, agents, skills, subagents, and scheduled runs.
-- **Egress control.** An optional WireGuard overlay routes all sandbox and browser traffic through a VPN.
+LibreChat reaches the sandbox through LibreBox's [MCP](https://modelcontextprotocol.io) server. MCP is the standard protocol for giving models tools. The chat lists the server as Sandbox, and Agent Builder lists it as LibreBoxMCP (see [Sandbox tools](#sandbox-tools) and [Instructions for the agent](#instructions-for-the-agent)).
 
----
+### A browser you can watch and use
 
-## Architecture
+The agent browses in a visible Google Chrome window, which it drives from the shell with [playwright-cli](https://github.com/microsoft/playwright-cli), Microsoft's command-line tool for Playwright. The globe icon in the LibreChat sidebar, labeled Browser, opens the Browser view at `/browser/`, which shows the sandbox's 1920x1080 display through [noVNC](https://novnc.com). Your mouse and keyboard work there too: when a step needs a person, such as a 2FA code, a captcha or a login, the agent asks you to do it there and then carries on.
 
-Libre Box is a set of small, single-purpose containers orchestrated by `docker-compose.yml`. Only **nginx** publishes ports; everything else communicates over private Docker networks.
+A server the agent starts is reachable only inside the sandbox, so you open it in the Browser view at `http://localhost:<port>`. Sign-ins last until the agent closes its browser session. To keep them, ask the agent to open the browser with a profile folder in `data/`.
 
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontSize":"14px","textColor":"#7d8590","lineColor":"#8b9bb4","primaryColor":"#eef2ff","primaryTextColor":"#312e81","primaryBorderColor":"#6366f1","clusterBkg":"transparent","clusterBorder":"#94a3b8","edgeLabelBackground":"#ffffff"}}}%%
-flowchart TB
-    accTitle: Libre Box container topology
-    accDescr: nginx is the only service that publishes ports, and it fronts both LibreChat and FileBrowser over separate networks, so FileBrowser and the auth gate are reachable from nginx alone. LibreChat drives the MCP server and Playwright over streamable-HTTP, the MCP server reaches the sandbox only through a read-only Docker socket proxy, and Playwright opens servers in the sandbox over sandbox_net.
+<!-- Demo 2 -->
 
-    Client(["Browser / Cloudflare"])
+### The agent's files in a file manager
 
-    subgraph EDGE["edge — the only published ports, 80/443"]
-        NGINX["nginx:alpine<br/>TLS · HTTP/2 · rate limits · headers · UI inject"]
-    end
+Everything the agent saves in its workspace appears in Files. The folder icon in the LibreChat sidebar opens `/files/`, a [FileBrowser Quantum](https://github.com/gtsteffaniak/filebrowser) view of `data/`, where you can upload inputs for the agent, preview and download what it produced or edit a text file. Like the Browser view, Files uses your LibreChat session, so there is no second password.
 
-    subgraph EFILES["edge_files — internal, nginx only"]
-        FB["FileBrowser<br/>:80 /files/"]
-    end
+- Files attached to a chat message don't reach the sandbox, because LibreChat stores them outside `data/`. Upload them through Files instead.
+- playwright-cli saves screenshots and page snapshots in `data/.playwright-cli/` unless the agent names another file. Files shows hidden folders like this one.
 
-    subgraph APP["app"]
-        LC["LibreChat<br/>:3080 UI + agent runtime"]
-        MCP["MCP server<br/>:8080 streamable-HTTP<br/>:8081 auth gate"]
-        PW["Playwright MCP<br/>:8931"]
-    end
+<!-- Demo 3 -->
 
-    subgraph SOCK["socket — internal"]
-        PROXY["docker-socket-proxy<br/>read-only, capability-restricted"]
-    end
+### LibreChat, configured for agents
 
-    subgraph SBX["sandbox_net — or the VPN namespace"]
-        SANDBOX["Sandbox<br/>Ubuntu 24.04 + full toolchain"]
-    end
+- Accounts: sign-up is closed, and accounts are created with `make create-user`.
+- Agents: they can search the web, hand subtasks to subagents, ask you questions in the middle of a task, remember facts about you between chats and render HTML or diagrams as artifacts in a side panel. Chats can also run on a schedule.
+- Chats: long conversations are summarized when they near the model's context limit, and temporary chats are deleted after 24 hours.
+- Integrations: the [Composio](https://composio.dev) MCP server connects agents to third-party apps through each user's own Composio account.
+- Models: seven providers are set up: Anthropic, DeepSeek, Google, Groq, OpenAI, OpenRouter and xAI. Put a provider's key in `.env` once for everyone, or leave it out and each user enters their own.
+- Skills: instruction files that LibreChat hands to the model when a task calls for them. Every skill folder in `librechat/skill/` is available to all users (see [Skills and plugins](#skills-and-plugins)). Two examples come with LibreBox: ai-check scores how machine-made a text reads, and humanize rewrites text to sound less machine-made.
+- Speech: voice input runs on Groq and read-aloud on OpenRouter.
+- Web search: Serper finds pages, Firecrawl reads them and Jina reranks the results.
 
-    subgraph DMONGO["data_mongo — internal"]
-        MONGO[("MongoDB")]
-    end
+LibreChat's code interpreter and RAG file search are not set up.
 
-    Client -->|"HTTPS"| NGINX
-    NGINX -->|"/"| LC
-    NGINX -.->|"/_auth → validate cookie, over edge_auth"| MCP
-    NGINX -->|"/files/ once auth_request passes"| FB
-    LC -->|"MCP over streamable-HTTP"| MCP
-    LC -->|"MCP"| PW
-    LC -->|"authenticated"| MONGO
-    MCP -->|"docker exec"| PROXY
-    PROXY --> SANDBOX
-    PW -->|"HTTP to sandbox:port"| SANDBOX
+## Requirements
 
-    classDef external fill:#ffffff,stroke:#94a3b8,stroke-width:1px,color:#0f172a
-    classDef edgeSvc fill:#fff4e6,stroke:#f59e0b,stroke-width:1px,color:#7c2d12
-    classDef appSvc fill:#eef2ff,stroke:#6366f1,stroke-width:1px,color:#312e81
-    classDef internalSvc fill:#f1f5f9,stroke:#64748b,stroke-width:1px,stroke-dasharray:4 3,color:#334155
-    classDef privileged fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
-    classDef volume fill:#ecfdf5,stroke:#10b981,stroke-width:1px,color:#064e3b
+- Docker: Docker Engine with the Compose plugin on Linux, or Docker Desktop on macOS. On Linux, your user needs access to Docker, for example through the `docker` group.
+- Host tools: `bash`, `git`, `make` and `openssl`.
+- Architecture: x86-64 or ARM64, including Apple Silicon. The sandbox image is built natively for the host, as `linux/amd64` or `linux/arm64`, so it runs without emulation.
+- Kernel: Linux 5.6 or newer for the agent's file tools, and 6.2 or newer with Landlock (the kernel's sandboxing feature) for the file search tool. Without Landlock, the agent searches through `shell_execute` instead. Docker Desktop's VM meets both. On a Linux host, `uname -r` shows the kernel version.
+- CPU: at least 4 cores, or a lower `SANDBOX_CPU_LIMIT` in `.env`. Docker refuses to start the sandbox when its CPU limit (4 by default) exceeds the number of cores available to Docker.
+- Memory: about 3 GB for the idle stack. Under load, the sandbox can grow to its 8 GiB limit (`SANDBOX_MEMORY_LIMIT`) and the other containers to 4.25 GiB together, or 5 GiB with certbot and the VPN. On a machine with less than about 13 GB, lower the sandbox limit, for example to `3G` on a machine with 8 GB. The sandbox build runs many stages at once, so on Docker Desktop give the VM at least 16 GB while you build `full` with the stack running.
+- Disk: about 40 GB with the default tier and about 100 GB with `full`, counting Docker's build cache, plus room for what the agent stores in `data/`. The build cache keeps each tool's stage, so that updates rebuild only what changed. Docker Desktop caps the cache at 20 GB by default, which is too small to keep `full`'s stages: raise `builder.gc.defaultKeepStorage` under Settings > Docker Engine, for example to `"120GB"`. `docker builder prune` frees the cache, at the cost of a full rebuild next time.
+- Network: free ports 80 and 443, which are fixed in `docker-compose.yml`, and no host network in `10.88.0.0/24` or `10.88.1.0/24`, which LibreBox uses inside Docker.
+- Host name: `localhost` works on your own computer. A server needs a domain name that points to it, and other devices on your LAN need a name they can resolve, for example through an entry in their hosts file, because nginx doesn't serve the site at an IP address.
+- API key: one from at least one model provider, such as Anthropic, OpenAI or OpenRouter.
 
-    class Client external
-    class NGINX edgeSvc
-    class LC,MCP,PW appSvc
-    class FB,PROXY,MONGO internalSvc
-    class SANDBOX privileged
+On Docker Desktop, the CPU, memory and disk figures apply to its VM, which you size under Settings > Resources.
 
-    linkStyle 2 stroke:#f59e0b,stroke-width:1.5px
+## Quick start
+
+These steps run LibreBox on your own computer at `https://localhost`. To install it on a server with a domain name, follow [Running on a server](#running-on-a-server) instead.
+
+1. Clone the repository and create the configuration file:
+
+   ```bash
+   git clone https://github.com/Kirill-Vaa/LibreBox.git
+   cd LibreBox
+   make init-env
+   ```
+
+   `make init-env` copies `.env.example` to `.env` and fills the internal secrets with random values.
+
+2. Add an API key for at least one model provider. In `.env`, uncomment the line for your provider and replace the placeholder with your key:
+
+   ```dotenv
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+
+   You can also skip this step: LibreChat asks for a key when you pick a provider that has none in `.env`.
+
+3. Start the stack. For a shorter first build, set `SANDBOX_TARGET=core` in `.env` first. Then run:
+
+   ```bash
+   make up
+   ```
+
+   The first run builds the local images, and most of the time goes to the sandbox image. A build from scratch took about 2 minutes for `core`, 6 for the default `standard` tier and 20 for `full`. `make up` waits until MongoDB, LibreChat and the sandbox pass their health checks, so you can create your account as soon as it returns.
+
+4. Create your account. The first account becomes the LibreChat admin:
+
+   ```bash
+   make create-user EMAIL=you@example.com NAME="Your Name" USERNAME=you
+   ```
+
+   Leave the password prompt empty to get a generated password printed in the terminal.
+
+5. Once `make ps` shows nginx as `healthy`, open `https://localhost`, accept the browser's warning about the self-signed certificate and sign in.
+
+## First chat
+
+Pick a model at the top of the chat. Then click the + icon at the bottom of the message box, choose Sandbox and ask for something that needs a computer:
+
+```text
+Check which Python version the sandbox has, then write hello.py that prints today's date and run it.
 ```
 
-The shared workspace is deliberately left out here — it spans every tier and gets [its own section](#where-code-actually-runs). Across all diagrams in this README: `([…])` is an external actor, `[…]` a service container and `[(…)]` a database; amber marks the public edge, indigo the application tier, slate-dashed internal machinery with no route from outside (`internal` networks, brokered access, foundation modules), red the deliberately-privileged sandbox, and a dashed arrow the control plane rather than the data plane.
+The reply shows each tool call the agent made.
+
+To try the browser, click the globe icon at the bottom of the sidebar, which opens the Browser view in a new tab, and ask:
+
+```text
+Open https://example.com in the browser, tell me the page title and leave the browser open.
+```
+
+Without the last part, the agent closes its browser session when it finishes.
+
+For regular work, create an agent, so that the sandbox tools stay attached to it:
+
+1. Open Agent Builder in the menu on the left.
+2. Enter a name and choose a model.
+3. Under Tools, click + Add, then select LibreBoxMCP and any other tools you want.
+4. Under Skills, choose All to let the agent use the skills. New agents start with skills off.
+5. Click Create.
+
+To chat with the agent, select it in the model menu at the top of a new chat. To apply a skill yourself, type `$` in the message box and pick it.
+
+The shield icon next to the globe, labeled Admin, opens the [LibreChat admin panel](https://github.com/LibreChat-AI/admin-panel) at `/admin/`, which only accounts with LibreChat's admin role can use.
+
+## Running on a server
+
+1. Point a DNS A record for your host name, for example `chat.example.com`, at the server, and open ports 80 and 443 in the server's firewall.
+2. On the server, clone the repository and create `.env`:
+
+   ```bash
+   git clone https://github.com/Kirill-Vaa/LibreBox.git
+   cd LibreBox
+   make init-env
+   ```
+
+3. Edit `.env`:
+
+   - Set `DOMAIN=chat.example.com` and add your provider key, as in step 2 of the [Quick start](#quick-start).
+   - If the server has fewer than 4 CPU cores, lower `SANDBOX_CPU_LIMIT`. With less than about 13 GB of memory, lower `SANDBOX_MEMORY_LIMIT` (see [Requirements](#requirements)). On a small disk, set `SANDBOX_TARGET=core`.
+   - To keep the agent away from the services on the server's own public IP address, add that address to `EGRESS_BLOCK_CIDRS`, for example `EGRESS_BLOCK_CIDRS=203.0.113.10/32` (see [Sandbox network](#sandbox-network)).
+
+4. Start the stack and create your account:
+
+   ```bash
+   make up
+   make create-user EMAIL=you@example.com NAME="Your Name" USERNAME=you
+   ```
+
+   `make up` creates a self-signed certificate for `DOMAIN` on the first start, so the site already works over HTTPS, with a browser warning.
+
+5. Get a Let's Encrypt certificate. The first command is optional: it tests the exchange against Let's Encrypt's staging server and saves nothing.
+
+   ```bash
+   make cert-issue EMAIL=you@example.com DRY_RUN=1
+   make cert-issue EMAIL=you@example.com
+   ```
+
+   The new certificate takes effect at once.
+
+6. Open `https://chat.example.com` and sign in.
+
+nginx answers only for the name in `DOMAIN` and drops requests for the server's IP address or any other name, so `https://203.0.113.10` won't load even when `https://chat.example.com` does.
+
+If the site sits behind Cloudflare's proxy, set `REAL_IP_PROVIDER=cloudflare` in `.env` and run `make restart`, so that the logs and rate limits see your visitors' addresses instead of Cloudflare's.
+
+### Certificates
+
+`make cert-issue` answers the HTTP-01 challenge through nginx on port 80, installs the certificate in `nginx/certs/` and starts the `certbot` service, which checks for renewal every 12 hours. It also adds `COMPOSE_PROFILES=certbot` to `.env`, so that later `make up` runs keep that service. After a renewal, nginx reloads within 15 minutes.
+
+To use a certificate from another source:
+
+1. If you ran `make cert-issue` before, remove `certbot` from `COMPOSE_PROFILES` in `.env` and stop the renewal service with `docker compose --profile certbot rm -sf certbot`. Otherwise it copies the Let's Encrypt certificate back within 12 hours.
+2. Copy the certificate to `nginx/certs/fullchain.pem` and its key to `nginx/certs/privkey.pem`.
+3. Run `make restart`, or wait up to 15 minutes for nginx to pick them up.
+
+The self-signed certificate that `make up` creates is valid for 365 days, and nothing renews it. If you change `DOMAIN` while you still use this certificate, or once it expires, delete both files in `nginx/certs/`, run `make up` to generate a new one and then run `make restart`.
+
+## Configuration
+
+LibreBox is configured in three files:
+
+- `.env` holds the domain, the secrets, the provider keys and the sandbox settings. `make init-env` creates it, and git ignores it.
+- `librechat/.env` holds LibreChat settings that are not secret, such as the app title, the visible endpoints, the session lifetime and the rate limits. It is tracked in git.
+- `librechat/librechat.yaml` defines the model endpoints, the MCP servers, the agent capabilities, speech and web search. It is tracked in git too.
+
+After editing any of them, run `make restart`. It applies the changes and keeps the sandbox with its running jobs, with two exceptions: a changed `SANDBOX_` limit recreates the sandbox, and a new `SANDBOX_TARGET` needs `make reload` instead (see [Sandbox image](#sandbox-image)).
+
+Keep provider keys in the root `.env`: `docker-compose.yml` sets those variables for LibreChat itself, so a key placed in `librechat/.env` is overridden.
+
+### Variables in `.env`
+
+The table follows the order of `.env.example`. The provider keys, the egress settings and the sandbox limits are commented out there, so uncomment a line to set that variable. Values marked "generated" are secrets that `make init-env` fills in. It replaces only their `REPLACE_WITH_` placeholders, so running it again doesn't change values that are already set. A model provider or web search service without a key asks each user for their own.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `COMPOSE_FILE` | `docker-compose.yml` | Read by Docker Compose. Leave it as it is, because `make` adds the VPN file when needed. |
+| `COMPOSE_PROFILES` | not set | `make cert-issue` sets it to `certbot`, so that the renewal service starts with the stack. |
+| `DOMAIN` | `localhost` | Host name of the site, used by LibreChat's URLs, nginx and the certificate. It must be a name, not an IP address. |
+| `REAL_IP_PROVIDER` | `none` | Set to `cloudflare` when the site is behind Cloudflare's proxy. |
+| `MONGODB_USER`, `MONGODB_PASSWORD` | `librebox`, generated | MongoDB's root account, created on the first start only. |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | generated | Sign LibreChat's session tokens. auth-gate checks the session for `/browser/` and `/files/` with the refresh secret. |
+| `CREDS_KEY`, `CREDS_IV` | generated | Encrypt the API keys and MCP credentials that users save. After a change, the saved ones can't be decrypted. |
+| `ADMIN_PANEL_SESSION_SECRET` | generated | Session secret shared by LibreChat and the admin panel. |
+| `ANTHROPIC_API_KEY` | not set | Anthropic key for all users. |
+| `DEEPSEEK_API_KEY` | not set | DeepSeek key for all users. |
+| `GOOGLE_API_KEY` | not set | Google key for all users. |
+| `GROQ_API_KEY` | not set | Groq key for all users. It also powers voice input. |
+| `OPENAI_API_KEY` | not set | OpenAI key for all users. It also powers LibreChat's OpenAI image generation. |
+| `OPENROUTER_API_KEY` | not set | OpenRouter key for all users. It also powers read-aloud. |
+| `XAI_API_KEY` | not set | xAI key for all users. |
+| `SERPER_API_KEY`, `FIRECRAWL_API_KEY`, `JINA_API_KEY` | not set | Web search keys for all users. |
+| `EGRESS_ALLOW_CIDRS` | not set | Comma-separated private addresses or ranges the sandbox may reach (see [Sandbox network](#sandbox-network)). |
+| `EGRESS_BLOCK_CIDRS` | not set | Comma-separated ranges the sandbox may not reach, checked before the allow list. |
+| `SANDBOX_TARGET` | `standard` | Sandbox image tier: `core`, `standard` or `full`. Apply a change with `make reload`. |
+| `SANDBOX_MEMORY_LIMIT` | `8G` | Memory limit of the sandbox, in Docker's units (`8G` is 8 GiB). |
+| `SANDBOX_CPU_LIMIT` | `4` | CPUs the sandbox may use, as a whole number no higher than the cores Docker has. |
+| `SANDBOX_PIDS_LIMIT` | `4096` | Maximum number of processes and threads in the sandbox. |
+| `SANDBOX_SHM_SIZE` | `1gb` | Size of `/dev/shm` in the sandbox. |
+| `DEFAULT_COMMAND_TIMEOUT_SECONDS` | `600` | Default timeout of `shell_execute` and `background_wait`, and the longest `sleep`, in seconds. |
+| `OUTPUT_CHAR_LIMIT` | `100000` | Characters of stdout and of stderr that `shell_execute` returns, and the size of one `background_tail` page. |
+| `LOG_LEVEL` | `INFO` | Log level of the MCP server and auth-gate: `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR` or `CRITICAL`. |
+| `LOG_SERIALIZE` | `true` | Write the MCP server's and auth-gate's log files as JSON lines. |
+
+Three of these variables need a note:
+
+- `MONGODB_PASSWORD`: if you choose the password yourself, use only letters and digits, because it goes into a connection URL without escaping.
+- `SANDBOX_CPU_LIMIT`: the sandbox also gets it as `OMP_NUM_THREADS` and `MAKEFLAGS=-jN`, because many programs there, such as Python's `os.cpu_count()`, still count all of Docker's cores.
+- `DEFAULT_COMMAND_TIMEOUT_SECONDS`: the agent can pass a longer timeout to a single call, up to 1195. With a value outside 1 to 1195, the MCP server doesn't start.
+
+### Skills and plugins
+
+To give every user a skill, add a folder with a `SKILL.md` file to `librechat/skill/` and run `make restart`. `SKILL.md` starts with a short header that gives the skill's `name` and a `description` of when to use it. The two example skills there, ai-check and humanize, show the format, and you can delete them if you don't need them. `make backup` saves this folder along with the skills users create in LibreChat.
+
+LibreChat also reads `librechat/plugins/` as its folder for plugins that apply to the whole deployment. The folder is empty by default, and `make backup` saves it too.
+
+## Sandbox
+
+### Sandbox image
+
+The image comes in three tiers. Each tier contains everything in the tiers listed before it. Sizes are approximate unpacked image sizes.
+
+| Tier | Adds | Size |
+| --- | --- | --- |
+| `core` | Ubuntu with command-line tools, Python, Node.js and Chrome | about 3 GB |
+| `standard` (default) | More languages, documents and media, databases, data science and cloud tools | about 15 GB |
+| `full` | Even more languages, TeX Live and LibreOffice, machine learning and security tools | about 42 GB |
+
+To switch tiers, set `SANDBOX_TARGET` in `.env` and run `make reload`, which builds the new image if needed and recreates the sandbox from it. Recreating the sandbox stops background jobs and drops packages installed outside `data/`, but the files in `data/` stay. The previous tier's image stays on disk: after switching away from `full`, for example, free the space with `docker image rm libre-box-sandbox:full`.
+
+The agent can list what is installed with the `sandbox_inventory` tool. The full list, with the versions recorded at build time, is `/usr/local/share/libre-box/inventory.json` inside the sandbox (`make sandbox-shell` opens a shell there).
+
+`core` contains:
+
+- Browser: Google Chrome on an Xvfb virtual display and playwright-cli.
+- Command-line tools: aria2, bat, btop, dasel, delta, direnv, duf, entr, eza, fd, fzf, GNU parallel, htop, httpie, jq, moreutils, ncdu, pv, ripgrep, shellcheck, shfmt, tree, universal-ctags, yq and zoxide.
+- Editors: nano, Neovim and Vim.
+- Fonts: DejaVu, Liberation and Noto for most scripts, including Chinese, Japanese, Korean and emoji.
+- Languages: Node.js with fnm (`fnm install` adds more Node.js versions), npm, pnpm and yarn, and Python 3.14 with pip and uv.
+- System: Ubuntu 26.04 with bash completion, bzip2, cmake, curl, fish, g++, gcc, git, Git LFS, GnuPG, lsof, make, OpenSSL, Perl, pkg-config, psmisc, rsync, ssh, strace, tmux, unzip, wget, xz, zip, zsh and zstd. Like Ubuntu itself, the sandbox uses the Rust coreutils (uutils), and the GNU versions are available with a `gnu` prefix, such as `gnuls` or `gnusort`.
+
+`standard` adds:
+
+- Cloud: age, Ansible, the AWS CLI, Buildah, the Docker CLI with Compose for remote Docker hosts, Helm, k9s, kubectl, Kustomize, OpenTofu, Packer, Skopeo, sops, Terraform and Vault.
+- Databases: clients for MariaDB and MySQL, MongoDB (mongosh and the database tools), PostgreSQL, Redis and SQLite, usql, and the MySQL, ODBC and PostgreSQL headers for building drivers.
+- Documents and diagrams: D2, DeckTape, Graphviz, LaTeX with latexmk, Marp, Mermaid, pandoc, PlantUML and Typst.
+- Fonts: Fira Code, GNU FreeFont, JetBrains Mono and Noto Extra.
+- Images, audio and video: ExifTool, ffmpeg, gifsicle, GraphicsMagick, ImageMagick, Inkscape, jpegoptim, librsvg, libvips, optipng, pngquant, potrace, SoX, Tesseract OCR for English and Russian with page orientation detection, and the WebP tools.
+- Languages: Go, Java 25 with Gradle and Maven, pipx, Poetry, pyenv with the headers it needs to build Python, the Python headers for building extensions, and Rust with cargo-binstall, clippy and rustfmt.
+- PDF: Ghostscript, img2pdf, MuPDF, OCRmyPDF, pdftk, poppler, qpdf and WeasyPrint.
+- Python libraries for data: Altair, DuckDB, IPython, JupyterLab, matplotlib, NumPy, pandas, Plotly, polars, PyArrow, scikit-learn, SciPy, seaborn, sqlite-utils and statsmodels.
+- Python libraries for files: fpdf2, mutagen, openpyxl, pikepdf, pydub, python-docx, python-pptx, ReportLab, tabulate and XlsxWriter.
+- Python libraries for images and text: imageio, NLTK with its tokenizers and stop words, ONNX Runtime, OpenCV, Pillow and scikit-image.
+- Python libraries for the web and databases: aiohttp, Beautiful Soup, httpx, lxml, parsel, psycopg, PyMongo, PyMySQL, readability-lxml, redis, Requests, Scrapy, selectolax, SQLAlchemy and SQLModel.
+- Other tools: ansible-lint, csvkit, dust, ESLint, files-to-prompt, hyperfine, jwt-cli, llm, Prettier, procs, Repomix, tealdeer, ttok, TypeScript with ts-node, VisiData, websocat, xh, yamllint and yt-dlp.
+
+`full` adds:
+
+- Cloud and supply chain: Checkov, gitleaks, Grype, Prowler, ScoutSuite, Syft and Trivy.
+- Documents: LibreOffice and the full TeX Live without its documentation packages, which saves about 3 GB.
+- Exploitation: Metasploit Framework with msfvenom, and searchsploit with the Exploit-DB archive.
+- Languages: .NET 10, Bun, Deno, Julia, Lua with LuaRocks, PHP with the curl and mbstring extensions, PowerShell, Python 3.11 from uv for droopescan, Prowler and wfuzz, R, and Ruby with rbenv and ruby-build.
+- Machine learning: CatBoost, EasyOCR, LightGBM, PyTorch with torchvision (CPU build), sentence-transformers, spaCy, transformers and XGBoost.
+- Network tools: arp-scan, arping, Bettercap, dig, ethtool, Ettercap, fping, hping3, iproute2, iptables, masscan, mtr, naabu, net-tools, netcat, nftables, ngrep, nmap with ncat, rlwrap, RustScan, smbclient with the Samba tools, socat, tcpdump, termshark, Tor with proxychains and torsocks, tshark and whois.
+- Passwords: crunch, fcrackzip, hashcat, hashid, hydra, John the Ripper, Medusa, Name That Hash, ncrack, patator and pdfcrack.
+- People search: holehe, Maigret and Sherlock.
+- Post-exploitation: chisel, the Ligolo-ng agent and Sliver.
+- Reverse engineering and forensics: apktool, binwalk, foremost, frida, gdb, Ghidra with its headless analyzer as `ghidra-analyze-headless`, hexedit, jadx, ltrace, radare2, scalpel, ssdeep, steghide, stegseek, The Sleuth Kit, UPX, Volatility 3, xxd and zsteg.
+- Web and reconnaissance: Amass, Arjun, assetfinder, CeWL, commix, dirsearch, dnsenum, dnsrecon, dnsx, droopescan, feroxbuster, ffuf, fierce, gau, gobuster, hakrawler, ProjectDiscovery's httpx as `httpx-pd`, katana, nikto, nuclei, recon-ng, sqlmap, subfinder, Sublist3r, theHarvester, wafw00f, waybackurls, wfuzz, WhatWeb and WPScan.
+- Windows and Active Directory: BloodHound.py, Certipy, Coercer, enum4linux-ng, Evil-WinRM, Impacket with its `impacket-*` commands, ldapdomaindump, lsassy, NetExec, pypykatz, Responder and smbmap.
+- Wordlists: FuzzDB in `/usr/share/fuzzdb/`, PayloadsAllTheThings in `/usr/share/payloads/`, and nmap's password list, rockyou.txt and SecLists in `/usr/share/wordlists/`.
+
+### Tool versions and updates
+
+Every tool that doesn't come from Ubuntu's packages installs at its latest release. The first build step looks up the current version of each tool online, so building the sandbox needs access to the internet: GitHub and GitLab, the language and package registries, and the download servers of the tools' vendors, such as Google, HashiCorp, Microsoft, MongoDB, PyTorch and Rapid7. Downloads are not checked against published checksums.
+
+[`services/sandbox/config/versions.env`](services/sandbox/config/versions.env) holds the few versions that "latest" doesn't settle:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `DOTNET_CHANNEL` | `10.0` | .NET SDK channel. Without it, the build uses the newest LTS channel in active support. |
+| `JAVA_VERSION` | `25` | OpenJDK major version, the LTS release. Without it, the build uses Ubuntu's default JDK. |
+| `NODE_MAJOR_VERSION` | `24` | Node.js major version. Without it, the build uses the newest LTS major version. |
+
+To hold a tool at a version, for example because its newest release breaks something, add a line such as `TRIVY_VERSION=0.76.2` to `versions.env`. The build lists every tool's name and the version it chose at the start of its log.
+
+Three commands rebuild the image:
+
+- `make reload` rebuilds only the steps whose scripts changed. It keeps the versions found by the last lookup, unless `versions.env` or `resolve-versions.sh` changed too, which makes it look the versions up again.
+- `make sandbox-update` looks up the latest versions and rebuilds the steps whose version changed. It also reinstalls the packages from cargo, gem, Go, npm, pip and pipx and the repositories cloned with git at their latest versions, then recreates the sandbox, which stops its background jobs.
+- `make update` does the same as part of updating the whole stack. It also pulls the Ubuntu base image, so the apt packages are updated whenever Ubuntu has published a newer image.
+
+Each tool or small group of tools is installed in a build stage of its own. A new Ghidra release, for example, rebuilds only Ghidra's stage and the final image, while a new Ubuntu base image or a change in a `system/` script rebuilds everything above it.
+
+Three more things to know about the installed tools:
+
+- Optional tools: every cargo tool and all pipx tools except Poetry in `standard`, and many of the security tools in `full`. The build carries on when one of them fails, prints a warning at the end and records in `/usr/local/share/libre-box/optional-installs.jsonl` whether each one installed. If a tool you expect is missing, check that file.
+- Python libraries: in the `standard` and `full` tiers, `pip install` can't change the versions of the preinstalled libraries, which are pinned in `/opt/pytools/constraints.txt`, so the agent puts packages that need other versions into a separate virtual environment. `/opt/pytools` is a virtual environment on Ubuntu's own Python 3.14. The MCP server runs its scripts in the sandbox with Ubuntu's `/usr/bin/python3`, so changes the agent makes to `/opt/pytools` don't affect them.
+- Security tools: the `full` tier installs most network, password and forensics tools from Ubuntu's packages. Tools that Ubuntu doesn't package, or whose package lags behind, come from cargo, gem, git, Go, pipx, release files on GitHub and Rapid7's package for Metasploit, which alone takes nearly 1 GB. They install at their latest upstream version, so a new release can break one of them. On ARM64, the build compiles Ghidra's native decompiler, because Ghidra ships it for x86-64 only.
+
+### Sandbox network
+
+The sandbox's only network leads to the egress gateway, which forwards the sandbox's traffic to the internet and answers its DNS queries with dnsmasq. The gateway drops all IPv6 and rejects traffic to:
+
+- Private networks: 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16.
+- The carrier-grade NAT range 100.64.0.0/10.
+- Link-local addresses, such as the cloud metadata address 169.254.169.254.
+- Loopback, multicast and other reserved ranges.
+
+Two settings in `.env` change that:
+
+- `EGRESS_ALLOW_CIDRS=192.168.1.20/32` lets the sandbox reach one machine on your LAN, such as a NAS. A whole range such as `192.168.1.0/24` also works, but it may include the LibreBox host itself. dnsmasq still discards DNS answers that point into private ranges, so a name that resolves to a LAN address comes back empty, and the agent has to use IP addresses there.
+- `EGRESS_BLOCK_CIDRS=203.0.113.10/32` blocks a public address, and the block list is checked first. Add your server's own public address here to keep the agent away from the services the server exposes on it.
+
+The MCP server includes both lists in the agent's instructions, so the agent knows which private addresses it may reach. Run `make restart` after changing them. It recreates the egress gateway with the new rules and the MCP server with the new lists. The sandbox keeps its background jobs, but its open connections drop, and it has no network for about half a minute, until it reaches the new gateway container.
+
+### VPN for the sandbox
+
+To send the sandbox's traffic through a WireGuard tunnel, save the WireGuard config from your VPN provider as `vpn/wg0.conf` and start the stack with:
+
+```bash
+make up-vpn
+```
+
+`make up-vpn` adds a [gluetun](https://github.com/passteque/gluetun) container that carries the sandbox's traffic only: LibreChat still calls the model APIs directly. It works on a running stack too: only the egress gateway is recreated, so the sandbox keeps its background jobs but loses the network for about half a minute (see [Sandbox network](#sandbox-network)). With the VPN on, the sandbox's DNS queries go to 1.1.1.1 and 1.0.0.1 through the tunnel. `make vpn-status` prints the sandbox's public address.
+
+How the VPN behaves:
+
+- Startup: the egress gateway waits for gluetun to report healthy, and the sandbox and the MCP server wait for the gateway. When the stack starts with a broken `vpn/wg0.conf`, the sandbox tools therefore don't come up, and `make logs-vpn` shows why.
+- A dropped tunnel: gluetun's firewall is on, and `vpn/post-rules.txt` lets it forward the sandbox's traffic only into the tunnel. If the tunnel drops while the stack runs, that traffic is dropped rather than sent around the VPN.
+- Later commands: while the VPN container exists, `make` commands include it automatically. `make down` removes it like the other containers, so after `make down`, start the stack with `make up-vpn` again.
+- `VPN=0`: don't add it to commands that start or recreate containers, such as `make up`, `make restart` or `make reload`. They rebuild the egress gateway without the VPN, and the sandbox's traffic goes out directly until a later command puts the VPN back.
+- Turning it off: remove the VPN container with `docker rm -f libre-box-vpn` and run `make up`, which recreates the egress gateway without it.
+
+### Sandbox tools
+
+The file and directory tools work only inside `/root/data`. `shell_execute` and the background tools can use any path in the sandbox.
+
+| Tool | What it does | Limits |
+| --- | --- | --- |
+| `background_list` | Lists tracked jobs with their commands and status. | 512 jobs. The oldest finished ones drop off first. |
+| `background_start` | Starts a long-running command detached from the call and returns its process ID. | Each file the job writes is limited to 25 GiB. |
+| `background_status` | Reports whether a job is still running and, once it has exited, its exit code. | - |
+| `background_stop` | Sends a signal, `TERM` by default, to a job's process group. | After `INT`, `QUIT` or `TERM`, waits for the job to exit, 10 s by default and up to 1195 s, then sends `KILL`. |
+| `background_tail` | Reads a job's log, either the last lines or from a byte offset. | 200 lines by default, up to 100,000. One call returns about `OUTPUT_CHAR_LIMIT` characters. |
+| `background_wait` | Waits until a job exits or the timeout passes, then returns its status and the last 200 lines of its log. | `DEFAULT_COMMAND_TIMEOUT_SECONDS` by default, up to 1195 s. |
+| `directory_create` | Creates a directory, with missing parents by default. | - |
+| `directory_tree` | Lists a directory tree with file and folder sizes. | 3 levels by default, up to 20. At most 20,000 entries. Fails after 60 s. |
+| `file_edit` | Replaces an exact piece of text, once or everywhere, and keeps CRLF line endings. | Files over 16 MiB are refused. |
+| `file_read` | Reads a text file with line numbers. | 2000 lines per call by default, at most 200,000 characters. Files over 64 MiB are refused. |
+| `file_search` | Searches file contents with ripgrep, or file names with fd. | 250 results by default, up to 10,000. Stops after 60 s. |
+| `file_view_image` | Shows a GIF, JPEG, PNG or WebP image, whole or a region of it, to the model and in the chat. | Scaled to at most 2000 px on the long side. Files over 50 MiB or 50 megapixels are refused. |
+| `file_write` | Creates or overwrites a text file, replacing the old file in one step. | 16 MiB per call. Doesn't write through symlinks. |
+| `sandbox_inventory` | Summarizes the tools installed in the image. | - |
+| `shell_execute` | Runs a command with `bash -lc` and returns stdout, stderr and the exit code. | `DEFAULT_COMMAND_TIMEOUT_SECONDS` by default, up to 1195 s. |
+| `sleep` | Waits without using the sandbox. | Up to `DEFAULT_COMMAND_TIMEOUT_SECONDS`. |
+| `time_now` | Returns the current time in a given time zone. | - |
+
+Four of these tools need a note:
+
+- `background_tail`: the log stays readable after the job has ended or the sandbox has restarted. Recreating the sandbox deletes the logs.
+- `background_wait`: to wait longer than 1195 s, the agent calls it again.
+- `file_view_image`: it works only on the Anthropic, DeepSeek, Google, OpenAI, OpenRouter and xAI endpoints, and the model has to accept images. On other endpoints, such as Groq, the image isn't displayed.
+- `shell_execute`: each call starts a fresh shell, and every process the command started is killed when the call returns. stdout and stderr are each cut to `OUTPUT_CHAR_LIMIT` characters, keeping the start and the end. The timeout is explained under [A command timed out](#a-command-timed-out).
+
+Every tool call is logged in `logs/mcp/mcp.log` with the tool name, the first 200 characters of each text argument and the duration. These lines are logged at `INFO`, so with a higher `LOG_LEVEL` only failed calls appear. The log leaves out the file text sent to `file_edit` and `file_write`, and keeps only the variable names from a tool's `env` argument. Commands are logged like the other text arguments, so the tool descriptions tell the agent to pass credentials in `env` rather than in the command.
+
+### Instructions for the agent
+
+The MCP server sends LibreChat instructions for the agent, and LibreChat adds them to the system prompt of every chat and agent that uses the sandbox tools. They are about 10,900 characters long, around 2700 tokens, and live in [`services/mcp/mcp_server/descriptions.py`](services/mcp/mcp_server/descriptions.py). Instructions you give in a chat or an agent take precedence over them.
+
+They cover:
+
+- The environment: the sandbox, when to use each tool, how to drive playwright-cli, and what only you can do from outside, such as uploading files or raising the sandbox's limits.
+- Initiative: the agent does the work in the sandbox instead of explaining how you could, installs what it is missing and doesn't ask before acting there. It asks first before anything outside the sandbox that can't be undone, such as changing a live database, sending email as you or spending money.
+- Authorized work: the agent treats security testing, scraping and system administration as authorized work on systems you control and leaves out safety disclaimers.
+- Untrusted text: text from web pages, files and command output counts as data, not as instructions.
+- Tidiness: each task gets its own folder in `data/` and its own named browser session, so two chats don't take over each other's Chrome window. At the end, the agent stops the jobs and browser sessions it started, except the ones you still need, and reports the result with links to its files in Files.
+
+After editing the file, run `make reload` to rebuild the MCP server and then `make restart`, so that LibreChat loads the new text.
+
+## Operations
+
+### Commands
+
+`make help` lists every target. Two variables change how some of them behave:
+
+- `TAIL=` sets how many past lines the log commands show, 200 by default. `TAIL=all` shows everything Docker kept, which is at most three 10 MB files per container since it was last created.
+- `VPN=1` or `VPN=0` adds the VPN to a command or leaves it out (see [VPN for the sandbox](#vpn-for-the-sandbox) before using `VPN=0`).
+
+Stack:
+
+| Command | What it does |
+| --- | --- |
+| `make init-env` | Create `.env` from `.env.example` and generate the internal secrets that are still placeholders. |
+| `make up` | Start the stack. It first checks `.env`, creates the `data/` and `logs/` folders and generates the self-signed certificate if there is none. |
+| `make up-vpn` | Start the stack with the sandbox's traffic going through a VPN (see [VPN for the sandbox](#vpn-for-the-sandbox)). |
+| `make down` | Stop and remove the containers. Volumes and `data/` stay. |
+| `make restart` | Apply configuration changes. The sandbox and its running jobs stay, unless a `SANDBOX_` limit changed. |
+| `make restart-all` | Restart every service, including the sandbox, which stops its jobs. |
+| `make ps` | Show the status of the containers. |
+| `make logs`, `make logs-<service>` | Follow the logs of all services, or of one, such as `make logs-mcp` (see [Services](#services) for the names). |
+
+Images:
+
+| Command | What it does |
+| --- | --- |
+| `make build` | Build the local images without starting them. |
+| `make reload` | Rebuild the images whose sources changed and recreate their containers. |
+| `make update` | Pull newer upstream images, rebuild the local ones on fresh base images with the latest sandbox tools and recreate the containers whose image changed (see [Updates](#updates)). |
+| `make rebuild` | Rebuild every image without the build cache and on fresh base images, then recreate all containers. It takes about as long as the first `make up` and stops the sandbox's jobs. |
+
+Sandbox:
+
+| Command | What it does |
+| --- | --- |
+| `make sandbox-shell` | Open a shell in the sandbox. |
+| `make mcp-shell` | Open a shell in the MCP server's container. |
+| `make sandbox-reset` | Recreate the sandbox from its image. `data/` stays, but background jobs and installed packages are gone. |
+| `make sandbox-update` | Update the sandbox's tools to their latest releases. `data/` stays, but background jobs and installed packages are gone. |
+| `make sandbox-build-core`, `make sandbox-build-standard`, `make sandbox-build-full` | Build the image of one tier without starting it. |
+| `make vpn-status` | Show the sandbox's public IP address. |
+
+Accounts:
+
+| Command | What it does |
+| --- | --- |
+| `make create-user EMAIL=you@example.com NAME="Your Name" USERNAME=you` | Create an account. It asks for the password, unless you pass `PASSWORD=`. |
+| `make list-users` | List the accounts. |
+| `make reset-password` | Set a new password for an account. It asks for the email and the password. |
+
+Data and certificates:
+
+| Command | What it does |
+| --- | --- |
+| `make backup` | Back up the stack (see [Backups](#backups)). `BACKUP_DIR=` sets the folder it writes into, `backups` by default. |
+| `make restore BACKUP=backups/libre-box-20261109-140500 CONFIRM=yes` | Replace the stack's data with a backup (see [Backups](#backups)). |
+| `make data-size` | Show how much space `data/` takes. |
+| `make clear-logs` | Empty the log files under `logs/` if the stack is running, or delete them if it is down. |
+| `make cert-issue EMAIL=you@example.com` | Get a Let's Encrypt certificate and start its renewal (see [Certificates](#certificates)). |
+| `make clean CONFIRM=yes` | Remove the containers and the Docker volumes (see [Where data lives](#where-data-lives)). `backups/`, `data/`, `logs/`, `.env`, the certificate files and the built images stay. |
+
+### Deleting an account
+
+To delete an account and all its data, use LibreChat's own script. LibreBox runs without Redis, so the script asks you to confirm that LibreChat is stopped. Stop it, run the script in a one-off container, answer its prompts, then start the stack again. `Index build failed` errors at the end of the script are harmless.
+
+```bash
+docker compose stop librechat
+docker compose run --rm --no-deps librechat npm run delete-user -- friend@example.com
+make up
+```
+
+### Where data lives
+
+| Location | Contents |
+| --- | --- |
+| `backups/` | Output of `make backup`. |
+| `data/` | The agent's workspace, also shown in Files. No `make` target deletes it, though `make restore` replaces its contents. |
+| `logs/` | Log files of auth-gate, LibreChat, the MCP server and nginx, each in a folder of its own. |
+| Docker volumes | MongoDB, LibreChat's uploads and images, FileBrowser's database, and certbot's account and renewal state. `make clean CONFIRM=yes` deletes them. |
+
+The log files rotate differently. LibreChat starts a new file every day or at 20 MB and keeps 14 days. The MCP server and auth-gate start a new file at 100 MB and keep 14 days. nginx never rotates its two files, so they grow until `make clear-logs`.
+
+Container filesystems, including anything installed in the sandbox outside `data/`, are lost whenever a container is recreated. That includes the logs of background jobs, which live in `/root/.box/logs/` in the sandbox, a folder the file tools and Files can't open.
+
+### Backups
+
+`make backup` writes a folder such as `backups/libre-box-20261109-140500/` that contains:
+
+- `.env`.
+- certbot's account and renewal state, once `make cert-issue` has created it.
+- `data/`, `librechat/plugins/` and `librechat/skill/`, as archives.
+- FileBrowser's database. FileBrowser stops for a few seconds while it is copied.
+- LibreChat's uploads and images.
+- A MongoDB dump.
+- The TLS certificate and its key.
+- `vpn/wg0.conf`, once you have added it.
+- SHA-256 checksums of everything above.
+
+The backup contains the secrets from `.env`, the certificate's private key and the WireGuard config, so keep it somewhere private. Nothing else from the checkout is copied, such as `librechat/.env` or `librechat/librechat.yaml`.
+
+To restore on the same machine, first stop background jobs that write to `data/`, because the sandbox keeps running during the restore. Then pass the folder:
+
+```bash
+make restore BACKUP=backups/libre-box-20261109-140500 CONFIRM=yes
+make restart
+```
+
+`make restore` checks the checksums, stops auth-gate, certbot, FileBrowser and LibreChat, and replaces everything the backup holds except `.env`:
+
+- `.env` stays as it is. The restore warns if `CREDS_KEY` or `CREDS_IV` differ from the backup, because the API keys users saved can't be decrypted with different values.
+- A backup made before one of these items was included leaves that item as it is.
+- The restored certificate is loaded by nginx once you run `make restart`.
+- A restored `vpn/wg0.conf` takes effect only after `make restart-all`, which restarts the VPN container too.
+
+To move LibreBox to a new machine, start it with the old secrets:
+
+1. Clone the repository and copy the backup folder into `backups/`.
+2. Before the first `make up`, copy the backup's `config/.env` to `.env`, so that MongoDB is created with the old password.
+3. Run `make up`, or `make up-vpn` with the VPN, then the two restore commands above. The restore brings back `vpn/wg0.conf`, but `make up-vpn` needs the file before it starts, so copy it from `config/vpn/` in the backup first.
+4. If the site has a Let's Encrypt certificate, point its DNS record at the new machine, then run `make cert-issue EMAIL=you@example.com` to restart the renewal.
+
+### Updates
+
+To update LibreBox to the latest commit:
+
+```bash
+make backup
+git pull --autostash
+make reload
+make restart
+```
+
+- `git pull --autostash` sets aside your edits to tracked files such as `librechat/.env` or `librechat/librechat.yaml` during the pull and applies them again afterwards. If an edit conflicts with an upstream change, git marks the conflict in that file. Resolve it before you run `make reload`.
+- `make reload` rebuilds the images whose sources changed and recreates their containers. If that includes the sandbox, its background jobs stop and packages installed outside `data/` are gone.
+- `make restart` loads changed configuration files.
+
+`make update` is a separate step: it pulls the newest images behind moving tags, such as `nginx:alpine` and FileBrowser's `latest`, rebuilds the local images on fresh base images, installs the latest releases of the sandbox's tools and recreates every container whose image changed. When Ubuntu publishes a new base image, the sandbox is rebuilt, which takes about as long as the first build, and its container is recreated, which stops its background jobs. To update only the sandbox's tools, run `make sandbox-update` (see [Tool versions and updates](#tool-versions-and-updates)).
+
+The LibreChat version is pinned in `docker-compose.yml`. To upgrade LibreChat, run `make backup`, change the `librechat/librechat` tag there and run `make restart`.
+
+### Uninstalling
+
+To remove LibreBox from a machine:
+
+1. Run `make clean CONFIRM=yes` to remove the containers and the volumes.
+2. Run `docker compose --profile certbot down --rmi all` to delete the images of the running stack, and `docker builder prune` to free the build cache.
+3. Remove the images that stack doesn't use, which `docker image ls` lists: the sandbox images of other tiers (`docker image rm libre-box-sandbox:full`, for example), gluetun's `qmcgaw/gluetun` and the base images the builds pulled.
+4. Delete the checkout folder. On Linux, files the sandbox created in `data/` belong to root and need `sudo rm`.
+
+## How it works
+
+```mermaid
+flowchart TB
+    user(["Your browser"]) -->|"HTTPS"| nginx["nginx"]
+    nginx -->|"/ (chat)"| librechat["LibreChat"]
+    nginx -->|"/admin/"| admin["Admin panel"]
+    nginx -->|"/files/"| files["FileBrowser"]
+    nginx -->|"/browser/"| viewer["noVNC viewer"]
+    nginx -.->|"session check"| gate["auth-gate"]
+    librechat --> mongo[("MongoDB")]
+    gate --> mongo
+    librechat -->|"MCP"| mcp["MCP server"]
+    mcp -->|"ping, version, inspect, exec"| proxy["Docker API proxy"]
+    proxy --> sandbox["Sandbox"]
+    viewer -.->|"screen"| sandbox
+    mcp --- data[("data/")]
+    sandbox --- data
+    files --- data
+    sandbox -->|"all traffic"| egress["Egress gateway"]
+    egress -->|"public IPv4 only"| internet(("Internet"))
+    egress -.->|"optional"| vpn["WireGuard VPN"]
+    vpn -.-> internet
+```
+
+nginx is the only way in, and it asks auth-gate to confirm a LibreChat session before it serves `/browser/` or `/files/`. The MCP server works on `data/` directly and runs commands in the sandbox through the Docker API proxy, and the noVNC viewer reads the sandbox's screen through a shared X11 socket.
 
 ### Services
 
-| Service                 | Image                                        | Role                                                                                                        | Networks                          | Published   | Memory |
-|-------------------------|----------------------------------------------|-------------------------------------------------------------------------------------------------------------|-----------------------------------|-------------|--------|
-| **mongodb**             | `mongo` (pinned by digest)                   | LibreChat database, started with `--auth`                                                                   | `data_mongo`                      | —           | 512M   |
-| **librechat**           | `ghcr.io/danny-avila/librechat` (v0.8.8-rc4) | Chat UI and agent runtime (listens on `:3080`)                                                              | `edge`, `app`, `data_mongo`       | —           | 1G     |
-| **nginx**               | `nginx:alpine`                               | TLS termination, reverse proxy, rate limiting, security headers, FileBrowser auth gate, LibreChat UI inject | `edge`, `edge_auth`, `edge_files` | **80, 443** | 256M   |
-| **sandbox**             | *built* `./services/sandbox`                 | The agent's execution environment (Ubuntu 24.04 + toolchain)                                                | `sandbox_net`                     | —           | 8G     |
-| **docker-socket-proxy** | `tecnativa/docker-socket-proxy:latest`       | Capability-restricted gateway to the Docker socket (mounted read-only)                                      | `socket`                          | —           | 64M    |
-| **mcp**                 | *built* `./services/mcp`                     | Custom MCP server: shell / session / background / file / system tools, plus the JWT auth gate               | `edge_auth`, `app`, `socket`      | —           | 512M   |
-| **filebrowser**         | `filebrowser/filebrowser:latest`             | Web file manager over the shared workspace, proxy-authenticated                                             | `edge_files`                      | —           | 256M   |
-| **playwright**          | `mcr.microsoft.com/playwright/mcp:latest`    | Headless Chromium browser-automation MCP (`--isolated`, per-session contexts) on `:8931`                    | `app`, `sandbox_net`              | —           | 1G     |
-| **vpn** *(overlay)*     | `qmcgaw/gluetun:latest`                      | Optional WireGuard egress for sandbox + playwright                                                          | `app` (alias `playwright`)        | —           | 512M   |
-
-Every service sets `restart: unless-stopped`, a memory limit, and a graceful `stop_grace_period`, and all but the intentionally-privileged `sandbox` add `no-new-privileges`. The `sandbox` additionally carries CPU (`4`) and PID (`4096`) limits.
-
-MongoDB, the sandbox, the MCP server, FileBrowser and (in the overlay) the VPN all declare healthchecks; `mcp` waits for the sandbox to report **healthy** before it starts, and `librechat` waits for MongoDB. Named volumes: `mongo_data`, `librechat_images`, `librechat_uploads`, `filebrowser_db`.
-
-### Network segmentation
-
-Traffic is compartmentalized so a compromise of one tier cannot reach the others:
-
-| Network       | Internal? | Members                    | Purpose                                               |
-|---------------|-----------|----------------------------|-------------------------------------------------------|
-| `edge`        | no        | nginx, librechat           | Public entrypoint: nginx to the LibreChat UI          |
-| `edge_auth`   | **yes**   | nginx, mcp                 | `auth_request` subrequests to the JWT auth gate       |
-| `edge_files`  | **yes**   | nginx, filebrowser         | The only route to FileBrowser, and it starts at nginx |
-| `app`         | no        | librechat, mcp, playwright | Inter-service application traffic                     |
-| `data_mongo`  | **yes**   | mongodb, librechat         | Database access only                                  |
-| `socket`      | **yes**   | docker-socket-proxy, mcp   | Brokered Docker access only                           |
-| `sandbox_net` | no        | sandbox, playwright        | Sandbox egress (replaced by the VPN in the overlay)   |
-
-### Request & authentication flow
-
-1. A browser reaches **nginx** over HTTPS. Requests whose `Host` does not match `DOMAIN` hit the default server and get an immediate connection reset (`444`, plus `ssl_reject_handshake`); plain HTTP is redirected to HTTPS, with an ACME webroot carve-out at `/.well-known/acme-challenge/` for certificate renewal.
-2. `/` is proxied to **LibreChat** (`burst=100`), with WebSocket upgrade and 1-hour proxy read/send timeouts for streaming. `/api/auth/` gets the stricter login rate limit. nginx also blanks the upstream `Accept-Encoding` and `sub_filter`s `<script src="/librebox/inject.js" defer>` in before `</head>`; re-compression is handled by nginx `gzip`.
-3. That script (`nginx/assets/inject.js`, served from `/librebox/inject.js`) adds a **Files** button to LibreChat's left rail — inserted at the top of the bottom cluster that holds `data-testid="nav-user"`, opening `/files/` in a new tab. A `MutationObserver` re-inserts it after client-side re-renders.
-4. `/files/` is proxied to **FileBrowser**, but first nginx issues an `auth_request` sub-request to the MCP **auth gate** (`mcp:8081/auth/validate`). The gate reads LibreChat's `refreshToken` / `token` cookies, verifies them (HS256, `exp` required) with the **shared `JWT_SECRET` / `JWT_REFRESH_SECRET`**, and returns the user id in `X-Auth-User`; on failure nginx redirects to `/login`. FileBrowser trusts that header via proxy auth — so **only logged-in LibreChat users can reach the file manager**, with no separate password.
-5. Inside LibreChat, agents call the **LibreBoxMCP** server over streamable-HTTP (`mcp:8080/mcp`). The MCP server executes shell work inside the sandbox by issuing `docker exec` calls **through the socket proxy** — it never touches the real Docker socket.
-
-### Where code actually runs
-
-Two different execution surfaces share one filesystem. `./data` on the host is bind-mounted into the MCP server, the sandbox (`/root/data`), Playwright (`/home/node/data`) and FileBrowser (`/srv`), so everything sees the same tree.
-
-| Tool family                                        | Executes in                                                      | Reach                                                                          |
-|----------------------------------------------------|------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `shell_execute`, `shell_session_*`, `background_*` | the **sandbox** container, via `docker exec` through the proxy   | the whole sandbox — full toolchain, full filesystem, its own network namespace |
-| `file_*`, `directory_*`                            | the **MCP** container itself (`rg` and `fd` are installed there) | only `/root/data`, enforced by `PathResolver`                                  |
-
-A file written with `file_write` is immediately visible to `shell_execute`, to Playwright's screenshot output, and in FileBrowser. Background-process logs are the exception: they live at `BACKGROUND_LOG_DIR` (`/root/.box/logs`) **inside the sandbox**, not in the shared workspace.
-
-The browser opens workspace files as `file:///home/node/data/<rel>` (enabled by `--allow-unrestricted-file-access`) and servers started in the sandbox as `http://sandbox:<port>`, because Playwright also joins `sandbox_net`; such servers must bind `0.0.0.0`. Playwright's auto-named output (page snapshots, console logs, unnamed screenshots) goes to `data/.playwright/`, which is safe to delete.
-
----
-
-## The MCP server
-
-`services/mcp` is a strict, fully type-hinted Python 3.13 application built on the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) (`MCPServer`), `starlette`/`fastapi`/`uvicorn`, `aiodocker`, `pydantic` + `pydantic-settings`, `pyjwt`, and `loguru`. It runs two ASGI apps behind a request-ID middleware:
-
-- **`:8080`** — the MCP streamable-HTTP server mounted at `/mcp`, plus a `/healthz` probe. A `TransportSecuritySettings` allowlist restricts the accepted `Host` headers to `mcp:*`, `localhost:*` and `127.0.0.1:*`.
-- **`:8081`** — the FileBrowser auth gate (FastAPI with docs disabled): `GET /auth/validate` and `GET /healthz`.
-
-Every shell-family tool call travels the same path, and never reaches Docker directly:
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"fontSize":"14px","textColor":"#7d8590","lineColor":"#8b9bb4","primaryColor":"#eef2ff","primaryTextColor":"#312e81","primaryBorderColor":"#6366f1","clusterBkg":"transparent","clusterBorder":"#94a3b8","edgeLabelBackground":"#ffffff"}}}%%
-sequenceDiagram
-    accTitle: Path of a shell tool call from the agent to the sandbox
-    accDescr: The agent calls the MCP server, which drives the sandbox through the capability-restricted socket proxy and returns a structured result under two independent timeouts.
-
-    autonumber
-    participant A as LibreChat agent
-    participant M as MCP server :8080/mcp
-    participant P as docker-socket-proxy
-    participant S as sandbox
-
-    A->>M: tools/call shell_execute
-    M->>P: aiodocker exec create + start<br/>DOCKER_HOST=tcp://docker-socket-proxy:2375
-    P->>S: timeout -k 5 N bash -lc command
-    Note over M,S: two independent timeouts — timeout -k 5 inside the sandbox,<br/>an asyncio backstop at N + 5 + 10 s in the MCP server
-    S-->>P: stdout / stderr frames, then exit code
-    P-->>M: stream
-    Note over M: exit 124 or 137 → timed_out<br/>output truncated to OUTPUT_CHAR_LIMIT, head and tail kept
-    M-->>A: structured Pydantic result
-```
-
-### Tool reference
-
-All tools are registered under the MCP server name **`libre-box`** (`LibreBoxMCP` in LibreChat). Results are structured Pydantic models; long output is truncated to `OUTPUT_CHAR_LIMIT`, keeping the head and the tail with a `[... N chars truncated ...]` marker in between.
-
-<details open>
-<summary><b>Shell</b> — one-shot commands</summary>
-
-| Tool            | Description                                                                                                                                                                                                           |
-|-----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `shell_execute` | Run a command via `bash -lc` under `timeout -k`; returns stdout, stderr, exit code, duration, and truncation/timeout flags. Args: `command`, `cwd` (default `/root/data`), `timeout` (default `600`, 1–86400), `env`. |
-
-Because commands run as **login** shells, `/etc/profile.d/10-toolchains.sh` is sourced every time and the full `/opt` toolchain is on `PATH`.
-
-</details>
-
-<details>
-<summary><b>Interactive sessions</b> — persistent stateful shells</summary>
-
-| Tool                       | Description                                                                                                                                                                                                            |
-|----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `shell_session_create`     | Open a persistent interactive `bash` session (TTY) that keeps cwd, environment, and shell state. Args: `cwd` (default `/root/data`), `env`.                                                                            |
-| `shell_session_execute`    | Run a command in a session; tracks the resulting cwd and returns partial output on timeout. Args: `session_id`, `command`, `timeout` (default `600`, 1–86400).                                                         |
-| `shell_session_send_input` | Answer an interactive prompt by writing raw text to a session's stdin; reports the exit code once the waiting command finishes. Args: `session_id`, `text`, `add_newline` (default `true`), `timeout` (default `2.0`). |
-| `shell_session_close`      | Terminate a session and free its resources. Args: `session_id`.                                                                                                                                                        |
-
-Sessions use marker-framed command completion, strip ANSI escapes and carriage returns, cap their buffer at 500 000 characters, are health-checked at creation with a 10-second probe, and are reaped every 60 seconds once idle longer than `SESSION_IDLE_TTL_SECONDS`. If a session's underlying shell stream dies it is detected and evicted immediately — the call surfaces a clear `SessionBrokenError` instead of hanging on an empty failure. Each command is submitted as a single shell parse unit, so the completion marker is consumed by the shell before the command starts and never reaches the stdin of a program that reads it: a command blocked on input reports `timed_out` with its prompt as partial output, and `shell_session_send_input` then delivers the answer and returns `completed` with the exit code.
-
-</details>
-
-<details>
-<summary><b>Background processes</b> — long-running jobs</summary>
-
-| Tool                | Description                                                                                                                                                                     |
-|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `background_start`  | Launch a detached process (`setsid`) whose output streams to a log file under `BACKGROUND_LOG_DIR`; returns a process id. Args: `command`, `cwd` (default `/root/data`), `env`. |
-| `background_status` | Report whether a process is running or exited, with its exit code. Args: `process_id`.                                                                                          |
-| `background_tail`   | Return recent output — last *N* lines, or a byte range for incremental streaming via `next_offset`. Args: `process_id`, `lines` (default `200`), `offset_bytes`.                |
-| `background_stop`   | Signal the process group and wait, escalating to `KILL` after a timeout. Args: `process_id`, `signal` (default `TERM`), `timeout` (default `10`).                               |
-| `background_wait`   | Block until the process exits (or timeout), then return status and a tail of output. Args: `process_id`, `timeout` (default `600`).                                             |
-| `background_list`   | List every tracked background process with its status. No args.                                                                                                                 |
-
-Accepted signals: `CONT`, `HUP`, `INT`, `KILL`, `QUIT`, `STOP`, `TERM`, `USR1`, `USR2`. Bash traps record a `128+n` exit code for signal-terminated jobs, so `background_status` still reports one after a `TERM` or `INT`. The reported `pid` is the `setsid` session-group leader, not the command's own PID. The process registry is held in memory, so restarting the MCP container forgets existing jobs (the logs and the processes themselves survive inside the sandbox).
-
-</details>
-
-<details>
-<summary><b>Files</b> — workspace-confined I/O</summary>
-
-| Tool               | Description                                                                                                                                                                                                                                                                  |
-|--------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `file_read`        | Read a text file with 1-based line-number prefixes; binary files are detected (NUL byte in the first 4 KiB) and returned without content. Args: `path`, `offset` (default `0`), `limit` (default `2000`), `encoding` (default `utf-8`).                                      |
-| `file_write`       | Write a file, overwriting and optionally creating parent directories. Args: `path`, `content`, `create_dirs` (default `true`), `encoding` (default `utf-8`).                                                                                                                 |
-| `file_edit`        | Exact-string replace; requires a unique match unless `replace_all` is set. Args: `path`, `old_string`, `new_string`, `replace_all` (default `false`), `encoding` (default `utf-8`).                                                                                          |
-| `file_search`      | Search with **ripgrep** (`content` mode, regex inside files, optional `glob` filter) or **fd** (`files` mode, glob against file names, e.g. `*.txt`). Args: `pattern`, `path` (default `.`), `glob`, `mode` (default `content`), `max_results` (default `250`, max `10000`). |
-| `directory_create` | Create a directory (with parents by default), succeeding if it already exists. Args: `path`, `parents` (default `true`).                                                                                                                                                     |
-| `directory_tree`   | Recursive tree with per-entry sizes, depth limit, and optional hidden entries. Args: `path` (default `.`), `max_depth` (default `5`, max `20`), `show_hidden` (default `true`), `show_sizes` (default `true`).                                                               |
-
-All file paths are resolved through a **`PathResolver`** that rejects anything escaping the `/root/data` workspace (`PathTraversalError`); relative paths are resolved against it.
-
-</details>
-
-<details>
-<summary><b>System</b> — helpers</summary>
-
-| Tool       | Description                                                                                                                          |
-|------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `sleep`    | Pause for *N* seconds (useful between polling steps). Args: `seconds`. Clamped server-side to `DEFAULT_COMMAND_TIMEOUT_SECONDS`.     |
-| `time_now` | Current time as ISO 8601 + epoch + human string, in a requested IANA timezone (falls back to UTC). Args: `timezone` (default `UTC`). |
-
-</details>
-
----
-
-## The sandbox
-
-`services/sandbox` builds a large Ubuntu 24.04 image that is the agent's workstation. Toolchains live under `/opt` with a `profile.d` entry that puts them on `PATH` and sets `CARGO_HOME`, `RUSTUP_HOME`, `GOROOT`, `GOPATH`, `PYENV_ROOT`, `PIPX_HOME`, `DOTNET_ROOT`, `XDG_CACHE_HOME`, `HISTFILE` and the Chrome/Puppeteer paths. The shared workspace is mounted at `/root/data` (also the image `WORKDIR`). The image is assembled from numbered install scripts in `services/sandbox/scripts/` so it is easy to audit and extend, with all pinned versions centralized in `services/sandbox/config/versions.env`; the scripts themselves are removed from the final image.
-
-The container runs `tini` → `entrypoint.sh`, which creates `/root/data`, `/root/.box/logs` and `/opt/state`, touches the readiness file `/root/.box/ready`, and then `sleep infinity`. The Docker `HEALTHCHECK` polls that file every 10 seconds — this is the gate the `mcp` service waits on.
-
-> ⚠️ **This image is big.** A full build downloads and installs many gigabytes (TeX Live, PyTorch/TensorFlow, Ghidra, wordlists, and more) and can take a long time on the first run. Budget ample disk and CPU. It is also pinned to `linux/amd64`, so on an arm64 host the whole build runs under emulation — see [Prerequisites](#prerequisites).
-
-Every install script purges its own package-manager caches (`npm`, `cargo`, `go`, `pip`, `uv`) in the same layer that fills them, and `90-cleanup.sh` sweeps whatever is left — apt lists, `~/.cache`, the Go module cache and the `__pycache__` trees under `/opt`. A layer that downloads gigabytes therefore does not also carry the cache that produced it, which keeps the shipped image far smaller than the sum of its installs.
-
-### Pinned versions
-
-Everything below is set in [`services/sandbox/config/versions.env`](services/sandbox/config/versions.env):
-
-| Languages & runtimes |           | Infra & CLI |          | Security  |                       |
-|----------------------|-----------|-------------|----------|-----------|-----------------------|
-| .NET SDK channel     | `10.0`    | age         | `1.3.2`  | apktool   | `3.0.3`               |
-| Go                   | `1.27.1`  | D2          | `0.8.2`  | Chisel    | `1.12.0`              |
-| OpenJDK              | `25`      | duf         | `0.9.1`  | Ghidra    | `12.1.4` (`20260921`) |
-| Julia                | `1.12.7`  | Helm        | `4.2.4`  | gitleaks  | `8.30.1`              |
-| Node.js              | `24.20.0` | shfmt       | `3.14.0` | jadx      | `1.5.6`               |
-| PowerShell           | `7.6.5`   | sops        | `3.13.3` | ligolo-ng | `0.9.1`               |
-| Rust channel         | `stable`  | OpenTofu    | `1.12.6` | Sliver    | `1.7.7`               |
-|                      |           | usql        | `0.21.4` |           |                       |
-
-The Kali repository is added but pinned at apt priority `50` (`KALI_PIN_PRIORITY`), so Ubuntu packages always win unless a package exists only in Kali.
-
-### What is installed
-
-The inventory below reflects the install scripts under `services/sandbox/scripts/`; consult them for the authoritative, per-package list.
-
-<details>
-<summary><b>Base system, shells & fonts</b></summary>
-
-**Build & compilers:** build-essential, gcc, g++, make, cmake, pkg-config.
-**Version control & remote:** git, git-lfs, openssh-client, rsync.
-**Networking & crypto:** curl, wget, openssl, gnupg, ca-certificates.
-**Archives:** unzip, zip, xz-utils, zstd, bzip2.
-**Shells & editors:** bash, bash-completion, zsh, fish, tmux, neovim, vim, nano, direnv.
-**System utils:** procps, psmisc, lsof, strace, file, less, tini, locales (en_US.UTF-8), tzdata, lsb-release, apt-transport-https, software-properties-common.
-**Fonts (via fontconfig):** Noto core, Noto CJK, Noto color-emoji, Noto extra, DejaVu, Liberation, Liberation 2, FreeFont, Fira Code, JetBrains Mono.
-
-</details>
-
-<details>
-<summary><b>Languages & runtimes</b></summary>
-
-**Python:** CPython 3 (`python3-dev`, `python3-venv`, `python3-pip`) with `pipx`, `uv`, `poetry`, and `pyenv`.
-**Node.js:** 24.20.0 with `corepack`, `npm`, `pnpm`, and `yarn`; plus `bun` and `deno`.
-**Go:** 1.27.1.
-**Rust:** stable toolchain via `rustup`, with `cargo-binstall`.
-**Java:** OpenJDK 25 with Maven and Gradle.
-**.NET:** SDK 10.0.
-**PowerShell:** 7.6.5.
-**Julia:** 1.12.7.
-**Ruby:** `ruby-full` with `rbenv`.
-**PHP:** `php-cli` (+ `curl` and `mbstring` extensions).
-**Perl / Lua / R:** Perl, Lua 5.4 (+ `luarocks`), and R (`r-base`).
-
-</details>
-
-<details>
-<summary><b>Data & ML (Python venv at <code>/opt/pytools</code>)</b></summary>
-
-**Core packaging:** pip, setuptools, wheel.
-**Deep learning:** torch (CPU build), tensorflow-cpu, onnxruntime.
-**Numerics & dataframes:** numpy, pandas, polars, scipy, statsmodels, pyarrow, duckdb, sqlite-utils.
-**Classic ML:** scikit-learn, xgboost, lightgbm, catboost.
-**NLP:** transformers, sentence-transformers, spaCy, NLTK (with punkt + stopwords data), gensim.
-**Plotting:** matplotlib, seaborn, plotly, altair.
-**Images & vision:** Pillow, OpenCV (headless), scikit-image, imageio.
-**OCR:** easyocr, paddleocr.
-**HTTP & scraping:** requests, httpx, aiohttp, BeautifulSoup4, lxml, parsel, selectolax, readability-lxml, scrapy.
-**Databases:** SQLAlchemy, SQLModel, psycopg, PyMySQL, redis, pymongo.
-**Notebooks:** IPython, JupyterLab.
-**Documents:** openpyxl, python-docx, python-pptx, XlsxWriter, reportlab, fpdf2, tabulate, pikepdf.
-**Audio:** pydub, mutagen.
-
-</details>
-
-<details>
-<summary><b>CLI, docs, media & data</b></summary>
-
-**Modern CLI:** fd, bat, fzf, ripgrep, eza, zoxide, git-delta, htop, btop, ncdu, tree, du-dust, procs, jq, yq, dasel, duf, shfmt, shellcheck, httpie, xh, hyperfine, aria2, parallel, pv, entr, moreutils, universal-ctags, tealdeer (tldr), jwt-cli, websocat.
-**Node/TS tooling:** TypeScript, ts-node, Prettier, ESLint.
-**Docs & diagrams:** pandoc, TeX Live (full), latexmk, LibreOffice, Typst, Graphviz, PlantUML, D2, Mermaid CLI, Marp, decktape, headless Chrome (`chrome-no-sandbox`), poppler-utils, qpdf, ghostscript, pdftk (pdftk-java), mupdf-tools, img2pdf, wkhtmltopdf.
-**Media & OCR:** ffmpeg, ImageMagick, GraphicsMagick, libvips, Tesseract (eng, rus, osd), exiftool, Inkscape, rsvg-convert (librsvg), potrace, optipng, jpegoptim, pngquant, gifsicle, webp, sox, libsndfile, ocrmypdf, weasyprint.
-**Data & prompt CLIs:** csvkit, visidata, yt-dlp, `llm`, `ttok`, `files-to-prompt`, `repomix`.
-**Automation & lint:** Ansible, ansible-lint, yamllint.
-
-</details>
-
-<details>
-<summary><b>Databases & cloud/infra</b></summary>
-
-**DB clients:** PostgreSQL, MariaDB/MySQL, Redis, SQLite, `mongosh` + MongoDB tools, `usql` (+ client dev headers: libpq, libmysqlclient, unixODBC).
-**Cloud & infra:** Docker CLI + Compose, skopeo, buildah, kubectl, Helm, Kustomize, k9s, Terraform, OpenTofu, Vault, Packer, AWS CLI, `sops`, `age`.
-
-</details>
-
-<details>
-<summary><b>Security & offensive tooling</b> (Kali repo pinned at low priority)</summary>
-
-**Recon/scanning:** nmap, ncat, masscan, rustscan, naabu, subfinder, amass, assetfinder, waybackurls, gau, hakrawler, katana, theHarvester, recon-ng, dnsx, dnsrecon, dnsenum, fierce, sublist3r, whois, dig (dnsutils).
-**Networking & sniffing:** tcpdump, tshark, termshark, ngrep, netcat-openbsd, rlwrap, arp-scan, arping, fping, hping3, mtr, ethtool, iproute2, net-tools, nftables, iptables.
-**Web:** nuclei, httpx (as `httpx-pd`), ffuf, feroxbuster, gobuster, wfuzz, dirsearch, sqlmap, nikto, whatweb, wafw00f, wpscan, commix, arjun, droopescan.
-**Exploitation:** Metasploit Framework, exploitdb (searchsploit).
-**Credentials & AD:** hydra, medusa, ncrack, patator, john, hashcat, hashid, name-that-hash, cewl, crunch, impacket, netexec, evil-winrm, responder, enum4linux-ng, smbmap, certipy, coercer, lsassy, pypykatz, bloodhound.py, ldapdomaindump.
-**RE & forensics:** radare2, Ghidra, jadx, apktool, binwalk, foremost, scalpel, volatility3, sleuthkit, steghide, stegseek, zsteg, outguess, ssdeep, fcrackzip, pdfcrack, xxd, hexedit, upx, gdb, ltrace, Frida.
-**C2, tunneling & MITM:** Sliver, Chisel, ligolo-ng (agent only, as `ligolo-agent`), proxychains, tor, torsocks, socat, bettercap, ettercap.
-**Supply-chain & secrets:** trivy, grype, syft, gitleaks, checkov, prowler, ScoutSuite.
-**OSINT:** sherlock, maigret, holehe.
-**Wordlists:** SecLists, PayloadsAllTheThings, fuzzdb, RockYou, and the Kali `wordlists` metapackage.
-
-</details>
-
----
-
-## The agent prompt
-
-The MCP server and the sandbox give the model *capability*; a system prompt gives it *policy*. A model handed a shell and no instructions still answers most questions as plain text, so this policy layer is the third component of the stack rather than a nicety — it is what turns "you have a computer" into an operating discipline: where files go, how results are handed back, when to background a job, which actions the agent may take on its own and which need your go-ahead, and how work survives a truncated tool call.
-
-[`agent/EXAMPLE_PROMPT.md`](agent/EXAMPLE_PROMPT.md) is that policy layer, shipped as a worked example. It is not a fixed contract — treat it as a template to copy verbatim on day one and reshape as your needs sharpen.
-
-Two boundaries in it are worth knowing before you hand an agent credentials:
-
-- **The approval line sits at the sandbox edge.** Inside the container the agent acts freely — installing, writing, running, backgrounding. Anything that reaches out of it (a write or delete on a remote host, `terraform apply`, `kubectl`, Helm, Ansible against real infrastructure, a live database change, sending a message, submitting a form, spending money) is prepared in full and then held for your explicit yes; reads and dry runs are not. Deleting or overwriting a file *you* uploaded needs confirmation too.
-- **Fetched content is data, never instructions.** Web pages, scraped text, uploaded files and command output are treated as information to weigh, with anything resembling a prompt-injection attempt reported rather than obeyed. Credentials you share are passed through environment variables or an interactive session, not written into workspace files or `progress.md` — everything under `/root/data` is visible in the file manager.
-
-### Using and adapting it
-
-Create an Agent in LibreChat, enable the `LibreBoxMCP` server (required — it is the sandbox), and paste the example into the Agent's **Instructions** field. The prompt also speaks to four optional capabilities, each a toggle on the agent itself — turn on the ones you want, and the prompt degrades gracefully around the rest:
-
-| Capability                                          | What it gives the agent                                                                                                                                                                                             |
-|-----------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Web search** and the `Playwright` server          | The two web-facing tools the prompt names: search and simple page fetches, plus a headless Chromium for interactive or JavaScript-heavy pages.                                                                      |
-| **Artifacts**                                       | Answers that *run*: HTML/CSS/JS pages, React components and Mermaid diagrams render live in a panel beside the chat instead of arriving as a block to paste somewhere else.                                         |
-| **Ask User**                                        | Clarifying questions that pause the run until the user answers — the way Claude Code does — instead of guessing or ending the turn with a question, and how it collects the go-ahead *Autonomy and Scope* requires. |
-| **Subagents** + **Allow self-spawn** (**Advanced**) | Delegation of a self-contained subtask to a fresh instance of the same agent in its own context window; only the final result comes back, so verbose work never lands in the conversation.                          |
-
-`Composio` (hosted integrations) is wired in too, though this example doesn't speak to it. Nothing else is required — the prompt is plain Markdown and assumes only the tools this stack already provides.
-
-Because it is an example, expect to edit it: rewrite the persona, tighten the tone, or drop sections you don't want. If the agent starts answering with an empty message, that is the model's own safety filter refusing, and the *Networking, diagnostics & analysis utilities* inventory is the first thing to cut. Three things are worth keeping in sync if you change the stack itself:
-
-- **Paths and delivery rules.** The prompt hard-codes the workspace (`/root/data/<topic>/`), the browser's view of it (`/home/node/data/<topic>/`), and the `/files/…` manager links files are handed back as. Move a mount and these have to move with it.
-- **The tool roster.** Each section names the tools it governs — sandbox tools in *The Libre Box Sandbox*, web search and Playwright in *Web Search and Browser*, then *Artifacts* and *Subagents*, with the question tool handled under *Autonomy and Scope*. Add or drop an MCP server or a capability and the matching section should follow, so the agent is never instructed to use something it doesn't have.
-- **The toolchain inventory.** The *Preinstalled Toolchain* list mirrors what the sandbox image actually ships. If you edit the install scripts under `services/sandbox/scripts/`, edit that list too — otherwise the agent plans around packages that aren't there.
-
----
-
-## Security model
-
-| Control                      | How                                                                                                                                                                                                                                                                                                                                      |
-|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **TLS**                      | TLS 1.2/1.3 only, modern cipher suite, HSTS (2 years, `includeSubDomains`), session tickets off, 1-day session timeout.                                                                                                                                                                                                                  |
-| **Edge hardening**           | Security headers (`X-Content-Type-Options`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy`, `Permissions-Policy`, CSP **report-only**), `server_tokens off`, unknown-host reset (`444` + `ssl_reject_handshake`).                                                                                                                      |
-| **Rate & connection limits** | 30 r/s general (burst 100), 5 r/s on `/api/auth/` (burst 10), 50 concurrent connections per IP; `429` on breach.                                                                                                                                                                                                                         |
-| **Real client IP**           | Cloudflare IPv4/IPv6 ranges trusted for `CF-Connecting-IP`.                                                                                                                                                                                                                                                                              |
-| **Least privilege**          | `no-new-privileges` on every service except the deliberately-privileged sandbox; nginx, mcp, and filebrowser drop **all** capabilities (mcp re-adds none; nginx keeps `CHOWN`/`NET_BIND_SERVICE`/`SETGID`/`SETUID`, filebrowser keeps `DAC_OVERRIDE`/`NET_BIND_SERVICE` so root-owned agent output stays manageable).                    |
-| **Brokered Docker access**   | The MCP server reaches Docker only via a capability-restricted `docker-socket-proxy` (socket mounted `:ro`, container root filesystem `read_only` with tmpfs `/run` and `/tmp`): it enables only `CONTAINERS`/`EXEC`/`INFO`/`PING`/`POST`/`VERSION`, disabling `IMAGES`/`NETWORKS`/`VOLUMES`/`SERVICES`/`SWARM`/`TASKS`.                 |
-| **Network isolation**        | Each backend shares a network only with the services that must reach it; `edge_auth`, `edge_files`, `data_mongo` and `socket` are `internal`. Only nginx publishes ports. The sandbox can reach `playwright:8931` over `sandbox_net`.                                                                                                    |
-| **Workspace confinement**    | MCP file tools resolve every path and reject traversal outside `/root/data`.                                                                                                                                                                                                                                                             |
-| **MCP transport allowlists** | The MCP server only accepts a `Host` of `mcp`, `localhost` or `127.0.0.1`; LibreChat only dials MCP addresses on its `mcpSettings.allowedAddresses` list (`mcp:8080`, `playwright:8931`, `connect.composio.dev:443`); Playwright MCP itself only accepts `Host: playwright:8931`.                                                        |
-| **SSO for the file manager** | FileBrowser publishes no port, runs with `--auth.method=proxy --auth.header=X-Auth-User`, and shares a network with nothing but nginx — which always overwrites `X-Auth-User` with the auth gate's answer, so the header cannot be forged from another container. Its bootstrap admin account is created with a random 16-byte password. |
-| **Secrets**                  | All credentials come from `.env` files that are git-ignored; only `*.example` templates are committed. `vpn/*.conf` and `nginx/certs/*` are ignored too.                                                                                                                                                                                 |
-
-> The sandbox itself is intentionally powerful (it holds `NET_ADMIN`/`NET_RAW`/`SYS_PTRACE` for the security toolchain and runs without `no-new-privileges`). Treat it as a privileged blast-radius: keep it on an isolated host/network, and consider the [VPN overlay](#vpn-egress-optional) to control its egress.
-
----
-
-## Prerequisites
-
-- **Docker Engine** with the **Compose v2** plugin (`docker compose`) and BuildKit (the sandbox build uses a cache mount).
-- **x86_64 (amd64) host recommended** — parts of the toolchain (Ghidra, Julia, AWS CLI, some Go/Rust builds) are x86_64-only. Runs on arm64/Apple Silicon via emulation (enable binfmt/Rosetta), but builds are much slower. Other services are multi-arch and run natively.
-- A host with generous resources. Service memory limits total roughly **12 GB**; the sandbox alone is capped at 8 GB / 4 CPUs. **14 GB+ RAM** and tens of gigabytes of free disk are recommended.
-- `git`, `make` and `openssl` (for the convenience targets and cert/secret generation).
-- For production: a **domain name**, DNS pointing at the host, and either real TLS certificates or a certbot workflow.
-- API keys for the model/search providers you intend to use (see [Configuration reference](#configuration-reference)).
-
----
-
-## Quick start (local development)
-
-```bash
-# 1. Clone
-git clone https://github.com/Kirill-Vaa/Libre-Box.git
-cd Libre-Box
-
-# 2. Create env files from templates
-cp .env.example .env
-cp librechat/.env.example librechat/.env
-
-# 3. Generate secrets (fill the REPLACE_WITH_* placeholders)
-openssl rand -hex 32   # -> JWT_SECRET
-openssl rand -hex 32   # -> JWT_REFRESH_SECRET
-openssl rand -hex 32   # -> CREDS_KEY   (32 bytes / 64 hex chars)
-openssl rand -hex 16   # -> CREDS_IV    (16 bytes / 32 hex chars)
-openssl rand -hex 24   # -> MONGODB_PASSWORD
-
-# 4. For local dev, set DOMAIN=localhost in .env and add at least one model provider
-#    key in librechat/.env (OPENROUTER_API_KEY works out of the box).
-
-# 5. Build and start (auto-creates data/ + logs/ directories and a self-signed cert)
-make up
-
-# 6. Follow the build/startup logs (the sandbox image build is large)
-make logs
-```
-
-Then open **https://localhost** (accept the self-signed certificate warning).
-
-**Creating the first user.** Registration is disabled by default (`ALLOW_REGISTRATION=false`). To create your account, temporarily set `ALLOW_REGISTRATION=true` in `librechat/.env`, run `docker compose up -d librechat`, register in the UI, then set it back to `false` and restart.
-
-> **Consistency note:** `JWT_SECRET` and `JWT_REFRESH_SECRET` live in `librechat/.env`, which the MCP container also loads via `env_file` — so the auth gate and LibreChat automatically share the same secrets. If neither is set, the MCP server logs a `critical` line at startup and the auth gate rejects every request.
-
----
-
-## Production deployment
-
-1. **Point DNS** for your `DOMAIN` at the host and set `DOMAIN` in `.env`. Set `DOMAIN_CLIENT`/`DOMAIN_SERVER` to `https://your.domain` in `librechat/.env`. Only the exact `DOMAIN` is served; any other `Host` is reset.
-2. **Provide real TLS certificates.** Place `fullchain.pem` and `privkey.pem` in `nginx/certs/` (these are git-ignored). The `certs` make target only generates a self-signed pair when none exist, so real certs are left untouched. For Let's Encrypt, the nginx config already serves `/.well-known/acme-challenge/` from the `nginx/certbot/` webroot.
-3. **Behind Cloudflare?** Real-IP restoration for Cloudflare ranges is already configured — no extra work needed.
-4. **Prepare host directories.** `make up` runs `make init-dirs` first, creating the `data/` workspace and `logs/{librechat,nginx,mcp}` automatically. `init-dirs` also chowns `data/` and `logs/librechat/` to `1000:1000` (falling back to `0777`) because both LibreChat and Playwright run as the non-root uid `1000`: Playwright writes screenshots and PDFs into `data/`, and LibreChat writes its rotating log files into `logs/librechat/` (`LOG_TO_FILE=true`). `logs/nginx/` and `logs/mcp/` stay root-owned since those containers log as root. If you create these directories by hand, apply the same ownership or LibreChat will crash-loop with `EACCES: permission denied` on `/app/logs`.
-5. **Harden the host.** Run on a dedicated/isolated machine, restrict inbound to 80/443, and keep the `.env` files readable only by the deploying user.
-6. **Start:** `make up` (or `make up-vpn` — see below).
-
----
-
-## Configuration reference
-
-Configuration is split between the root `.env` (stack + MCP settings), `librechat/.env` (LibreChat + provider secrets), and `librechat/librechat.yaml` (LibreChat feature configuration).
-
-### Root `.env`
-
-| Variable                            | Default              | Description                                                                                                  |
-|-------------------------------------|----------------------|--------------------------------------------------------------------------------------------------------------|
-| `COMPOSE_FILE`                      | `docker-compose.yml` | Compose file(s) used by `make`/`docker compose`. Append `:docker-compose.vpn.yml` to make the VPN permanent. |
-| `DOMAIN`                            | —                    | Public hostname served by nginx (use `localhost` for dev).                                                   |
-| `MONGODB_USER` / `MONGODB_PASSWORD` | `librebox` / —       | MongoDB root credentials, also used to build LibreChat's `MONGO_URI`.                                        |
-| `SANDBOX_CONTAINER_NAME`            | `libre-box-sandbox`  | Container the MCP server drives via `docker exec`.                                                           |
-| `WORKSPACE_PATH`                    | `/root/data`         | Workspace root (also the file-tool jail).                                                                    |
-| `BACKGROUND_LOG_DIR`                | `/root/.box/logs`    | Where background-process logs are written **inside the sandbox**.                                            |
-| `MCP_PORT` / `AUTH_PORT`            | `8080` / `8081`      | MCP streamable-HTTP port and auth-gate port (must differ).                                                   |
-| `DEFAULT_COMMAND_TIMEOUT_SECONDS`   | `600`                | Default timeout for shell/session commands, and the cap for `sleep`.                                         |
-| `OUTPUT_CHAR_LIMIT`                 | `100000`             | Max characters returned before head/tail truncation.                                                         |
-| `SESSION_IDLE_TTL_SECONDS`          | `3600`               | Idle interactive sessions are reaped after this.                                                             |
-| `LOG_LEVEL`                         | `INFO`               | Loguru level (`TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARNING`, `ERROR`, `CRITICAL`).                          |
-| `LOG_SERIALIZE`                     | `true`               | Emit JSON logs to the file sink.                                                                             |
-
-### `librechat/.env`
-
-Loaded by both the `librechat` and the `mcp` containers.
-
-| Variable                                                                                              | Description                                                                                                                 |
-|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
-| `CREDS_KEY` / `CREDS_IV`                                                                              | LibreChat credential encryption (32-byte / 16-byte hex).                                                                    |
-| `DOMAIN_CLIENT` / `DOMAIN_SERVER`                                                                     | Public URLs for the client and server.                                                                                      |
-| `LOG_TO_FILE`                                                                                         | `true`, so LibreChat writes rotating logs into the mounted `logs/librechat/`.                                               |
-| `DEPLOYMENT_PLUGINS_DIR` / `DEPLOYMENT_SKILLS_DIR`                                                    | Deployment-wide plugin and skill directories, served from the read-only `librechat/plugins/` and `librechat/skill/` mounts. |
-| `SERPER_API_KEY` / `FIRECRAWL_API_KEY` / `JINA_API_KEY`                                               | Web-search, scraping, and reranking providers (`FIRECRAWL_VERSION` selects the API version).                                |
-| `ANTHROPIC_API_KEY` / `GOOGLE_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `XAI_API_KEY`          | Model-provider keys; only `OPENROUTER_API_KEY` ships enabled (uncomment the rest in `librechat.yaml`).                      |
-| `COMPOSIO_API_KEY`                                                                                    | Auth key for the **Composio** MCP server (hosted tool integrations).                                                        |
-| `ALLOW_REGISTRATION`                                                                                  | `false` by default; enable temporarily to create the first user.                                                            |
-| `JWT_SECRET` / `JWT_REFRESH_SECRET`                                                                   | Session signing keys — **also consumed by the MCP auth gate**.                                                              |
-
-### `librechat/librechat.yaml`
-
-The shipped configuration (schema `version: 1.3.16`) turns on the agentic surface of LibreChat:
-
-- **MCP servers:** `LibreBoxMCP` (streamable-HTTP to `mcp:8080/mcp`, 24-hour client timeout so long tool calls don't get cut off), `Playwright` (`playwright:8931/mcp`) and `Composio`. Outbound MCP addresses are allowlisted in `mcpSettings.allowedAddresses`, and the UI re-polls tool lists and server status every 30 seconds (`toolsRefreshInterval`, `statusRefreshInterval`).
-- **Agents:** `recursionLimit: 500`, `maxSubagents: 50`, subagents enabled (including self-delegation), and 14 capabilities (`actions`, `artifacts`, `ask_user_question`, `chain`, `context`, `deferred_tools`, `memory`, `ocr`, `programmatic_tools`, `skills`, `subagents`, `tool_intents`, `tools`, `web_search`). These only *permit* a feature — each agent still switches on the ones it needs in the agent builder. `allowedProviders` gates which endpoints agents may use.
-- **Interface:** prompts, agents, skills (catalog capped at 100) and **schedules** are usable and creatable but never shared or public; the agent marketplace, bookmarks, memories and feedback are off; `runCode` is off (the sandbox replaces it); `modelSelect` and `contextCost` are on; `defaultPinnedTools` are `artifacts`, `web_search`.
-- **Web search:** Serper as search provider, Firecrawl as scraper, Jina as reranker.
-- **Conversation handling:** immediate title generation, `maxToolResultChars: 100000`, and token-ratio summarization at 95 % of the window.
-
-### Deployment plugins and skills
-
-Two directories in this repo are handed to LibreChat as deployment-wide extension points, mounted read-only and pointed at by `DEPLOYMENT_PLUGINS_DIR` / `DEPLOYMENT_SKILLS_DIR` in `librechat/.env`:
-
-### Adding a model provider endpoint
-
-Model providers are LibreChat **endpoints**, configured in [`librechat/librechat.yaml`](librechat/librechat.yaml). Out of the box only the custom **OpenRouter** endpoint is active; the built-in `anthropic` / `google` / `openAI` blocks and a sample `xai` custom endpoint are present but commented out — uncomment the one you want and supply its key. Any other OpenAI-compatible provider is added under `endpoints.custom`:
-
-```yaml
-endpoints:
-  custom:
-    - name: "OpenRouter"
-      apiKey: "${OPENROUTER_API_KEY}"
-      baseURL: "https://openrouter.ai/api/v1"
-      models:
-        default:
-          - "openai/gpt-4o-mini"
-        fetch: true
-      titleModel: "openai/gpt-4o-mini"
-      modelDisplayLabel: "OpenRouter"
-```
-
-Then:
-
-1. Add the referenced key (`OPENROUTER_API_KEY` here) to `librechat/.env`, and a matching `REPLACE_WITH_*` placeholder to `librechat/.env.example`.
-2. Add the endpoint `name` to `endpoints.agents.allowedProviders` so agents are allowed to use it.
-3. For a **built-in** endpoint (`anthropic` / `google` / `openAI`), add its family to the `ENDPOINTS` variable in `librechat/.env` — it ships as `ENDPOINTS=custom,agents`, so enabling `anthropic` means `ENDPOINTS=custom,agents,anthropic`. Custom providers (OpenRouter, xAI, anything under `endpoints.custom`) are already covered by the single `custom` entry and need no change here.
-4. Recreate the container: `docker compose up -d librechat` (or `make reload`).
-
-`${VAR}` references are resolved from `librechat/.env` at container start, and `models.fetch: true` pulls the provider's live model list.
-
----
-
-## VPN egress (optional)
-
-`docker-compose.vpn.yml` adds a [gluetun](https://github.com/qdm12/gluetun) WireGuard client and moves the **sandbox** and **playwright** containers into the VPN's network namespace (`network_mode: service:vpn`), so *all* of their outbound traffic exits through the tunnel. The gluetun container takes the `playwright` network alias on the `app` network and opens inbound port `8931` in its firewall, so LibreChat still reaches the Playwright MCP at `playwright:8931`. The sandbox stays reachable too, because the MCP server drives it through the Docker socket proxy rather than over the network. The browser then opens sandbox servers at `http://localhost:<port>`, since both containers share the VPN's network stack.
-
-```bash
-# Provide a WireGuard config (git-ignored)
-cp your-provider.conf vpn/wg0.conf
-
-# Start with the overlay (one-off)
-make up-vpn
-
-# Or make it permanent by setting in .env:
-# COMPOSE_FILE=docker-compose.yml:docker-compose.vpn.yml
-
-# Verify the sandbox's public egress IP
-make vpn-status
-```
-
----
-
-## Using Libre Box
-
-1. **Sign in** to LibreChat at your domain.
-2. **Enable MCP tools.** Create or open an **Agent** and enable the servers you want: `LibreBoxMCP` (the sandbox — required), plus optionally `Playwright` (browser automation) and `Composio` (hosted integrations). LibreChat's MCP integration is on by default; server creation and sharing are disabled per `librechat.yaml`.
-3. **Enable the agent's own capabilities.** In the same builder, **Web Search**, **Artifacts** (code that renders live beside the chat) and **Ask User** (clarifying questions and confirmations that pause the run) sit alongside the MCP servers; **Subagents** and **Allow self-spawn** are under **Advanced**, and let the agent delegate subtasks to a fresh instance of itself. All four are optional — the shipped prompt uses each one when it's present and reads fine without it.
-4. **Give the agent its instructions.** Paste the example prompt [`agent/EXAMPLE_PROMPT.md`](agent/EXAMPLE_PROMPT.md) into the Agent's **Instructions** field — see [The agent prompt](#the-agent-prompt) for what it establishes and what to keep in sync if you adapt it. Skipping this step is the most common reason an otherwise-working stack still answers in plain text instead of using the sandbox.
-5. **Ask the model to *do* things** — install a package, clone and analyze a repo, run a long build in the background and tail its logs, render a document with Typst/Pandoc, scan a target you're authorized to test, and so on. State persists across turns, and interactive sessions keep cwd and shell state between calls.
-6. **Go further with agents** — subagents, skills, artifacts and schedules are enabled, so recurring or multi-step jobs can be delegated and re-run on a cron-like cadence. Skills and plugins that should exist for the whole deployment rather than one account go into [`librechat/skill/` and `librechat/plugins/`](#deployment-plugins-and-skills).
-7. **Browse the workspace** via the **Files** button at the bottom of LibreChat's left rail, or directly at `https://your.domain/files/` — the same `./data` directory the agent works in, gated by your LibreChat login.
-8. **Web search** works out of the box once the Serper/Firecrawl/Jina keys are set.
-
----
-
-## Operations (Makefile)
-
-Every target is a thin wrapper around `docker compose` and honours `COMPOSE_FILE` from the root [`.env`](#root-env) — point it at `docker-compose.yml:docker-compose.vpn.yml` and even a plain `make up` brings the VPN overlay along. The one exception is `make up-vpn`, which names both compose files itself.
-
-### Stack lifecycle and status
-
-| Target            | What it does                                                                                                                           |
-|-------------------|----------------------------------------------------------------------------------------------------------------------------------------|
-| `make help`       | List every target with its one-line description — the default goal, so a bare `make` prints it too                                     |
-| `make up`         | Start the whole stack detached, after running `init-dirs` and `certs`                                                                  |
-| `make up-vpn`     | Start it with `docker-compose.vpn.yml` layered on as a one-off, without touching `COMPOSE_FILE`                                        |
-| `make down`       | Stop and remove the containers plus any orphans; named volumes are kept                                                                |
-| `make restart`    | Restart every service in place, without recreating containers                                                                          |
-| `make build`      | Build the images this repo builds itself (`sandbox`, `mcp`)                                                                            |
-| `make reload`     | `init-dirs`, `certs`, rebuild changed images, recreate what changed — the usual command after editing configuration                    |
-| `make rebuild`    | Clean rebuild: `down`, `build --no-cache`, then `init-dirs`, `certs` and `up`                                                          |
-| `make init-dirs`  | Create `data/` and `logs/{librechat,nginx,mcp}/`, then hand `data/` and `logs/librechat/` to uid `1000` (falling back to `chmod 0777`) |
-| `make certs`      | Write a self-signed `nginx/certs/{fullchain,privkey}.pem` for `localhost` (RSA-2048, 365 days); skipped when both files already exist  |
-| `make ps`         | Show container status                                                                                                                  |
-| `make logs`       | Follow the logs of every service                                                                                                       |
-| `make logs-<svc>` | Follow one service, e.g. `make logs-mcp` or `make logs-sandbox`                                                                        |
-
-### Sandbox and MCP containers
-
-| Target               | What it does                                                                   |
-|----------------------|--------------------------------------------------------------------------------|
-| `make sandbox-build` | Build only the sandbox image                                                   |
-| `make sandbox-shell` | Open a login shell (`bash -l`) inside the sandbox                              |
-| `make sandbox-reset` | Force-recreate the sandbox from its image — a clean OS that keeps `/root/data` |
-| `make mcp-shell`     | Open a shell (`/bin/sh`) inside the MCP container                              |
-
-> `make sandbox-reset` force-recreates the sandbox container: anything the agent installed at runtime is discarded, as are the background-process logs in `/root/.box/logs`. Only `/root/data` (the host `./data` bind mount) survives.
-
-### Diagnostics and cleanup
-
-| Target                   | What it does                                                                     |
-|--------------------------|----------------------------------------------------------------------------------|
-| `make vpn-status`        | Print the sandbox's public egress IP — the VPN's own when the overlay is running |
-| `make data-size`         | Show the size of the shared `./data` workspace                                   |
-| `make clear-logs`        | Delete the host log files under `./logs`, or truncate them if the stack is up    |
-| `make clean`             | Remove containers **and named volumes** — refuses unless `CONFIRM=yes`           |
-
-> ⚠️ **`make clean` is the one destructive target.** `docker compose down -v` deletes `mongo_data`, `librechat_images`, `librechat_uploads` and `filebrowser_db`, so accounts, conversations and LibreChat uploads are gone for good. The `./data` workspace is a bind mount and survives.
-
----
+Each service runs in one container. The service name is the one `make logs-<service>` takes.
+
+| Service | Role | Memory limit |
+| --- | --- | --- |
+| `admin-panel` | LibreChat admin panel at `/admin/`, built from the `main` branch of its repository. | 256 MiB |
+| `auth-gate` | Confirms a LibreChat session before nginx serves `/browser/` or `/files/`. | 256 MiB |
+| `browser-view` | noVNC viewer of the sandbox's display at `/browser/`. | 256 MiB |
+| `certbot` | Renews the Let's Encrypt certificate. It runs only after `make cert-issue`. | 256 MiB |
+| `docker-socket-proxy` | Docker API proxy between the MCP server and the Docker socket. | 128 MiB |
+| `egress` | Egress gateway, the sandbox's firewall and DNS server. | 128 MiB |
+| `filebrowser` | FileBrowser Quantum at `/files/`. | 512 MiB |
+| `librechat` | LibreChat, the chat interface that runs the agents. | 1 GiB |
+| `mcp` | MCP server with the sandbox tools. | 1 GiB |
+| `mongodb` | LibreChat's database. | 512 MiB |
+| `nginx` | Reverse proxy with TLS, the only service that publishes ports. | 256 MiB |
+| `sandbox` | The agent's Ubuntu container. | 8 GiB (`SANDBOX_MEMORY_LIMIT`) |
+| `vpn` | gluetun's WireGuard tunnel. It runs only after `make up-vpn`. | 512 MiB |
+
+## Security
+
+### What keeps the sandbox contained
+
+- Only nginx publishes ports on the host. The admin panel, auth-gate, FileBrowser, the MCP server, MongoDB and the noVNC viewer sit only on internal Docker networks, and MongoDB is reachable only from auth-gate and LibreChat.
+- The MCP server has no Docker socket. The Docker API proxy holds the socket and passes on only ping, version, inspect and non-privileged `exec` calls for the sandbox container, so the MCP server can't create or reconfigure containers.
+- `/browser/` and `/files/` need a LibreChat session. auth-gate checks the signature of the `refreshToken` cookie with `JWT_REFRESH_SECRET`, looks the session up in MongoDB and remembers a confirmed session for 10 seconds, so both stop working at most 10 seconds after you sign out. A Browser view that is already open stays connected, because the session is checked only when it connects.
+- The file tools open every path relative to `/root/data` with `openat2` and `RESOLVE_BENEATH`, so `..` and symlinks can't lead them outside, and they don't write through symlinks. `file_search` runs `fd` and `rg` under Landlock with read-only access to the workspace.
+- The sandbox has no route to anything but the egress gateway (see [Sandbox network](#sandbox-network)).
+- By default the sandbox is limited to 4 CPUs, 8 GiB of memory and 4096 processes and threads.
+- Every other container has memory and process limits too. All of them except the VPN set `no-new-privileges`, and most run with a read-only filesystem and only the capabilities they need.
+
+### What LibreBox does not isolate
+
+- LibreBox is meant for one person, so all accounts share one sandbox, one `data/` folder, one browser and one list of background jobs. Every account is an admin in Files, which deletes without asking for confirmation, and every account can type into the live browser. Create accounts only for people you would trust with all of that.
+- Inside the sandbox the agent is root and has the `NET_ADMIN`, `NET_RAW` and `SYS_PTRACE` capabilities. The container boundary and the network rules are what contain it.
+- The sandbox can reach every public address, including your server's own public IP, unless you add it to `EGRESS_BLOCK_CIDRS`.
+- Whatever the agent can read, it can also send to the internet, so keep secrets it doesn't need out of `data/` and out of the chat.
+- Shared conversation links open without signing in, because `librechat/.env` sets `ALLOW_SHARED_LINKS_PUBLIC=true`.
+- LibreChat's Agents API is on (`remoteAgents` in `librechat/librechat.yaml`), so every account can create API keys and run its agents, including their sandbox tools, from outside the browser.
 
 ## Troubleshooting
 
-| Symptom                                                                   | Cause and fix                                                                                                                                                                                                                         |
-|---------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| The agent answers with an empty message                                   | The model's own safety filter refused the completion — the prompt's offensive-security inventory is the usual trigger. Drop the *Networking, diagnostics & analysis utilities* bullet from the agent's Instructions.                  |
-| The sandbox build crawls, or the container exits with `exec format error` | The sandbox image is `linux/amd64` only. On an arm64 host it runs emulated: enable Rosetta or binfmt in Docker Desktop (elsewhere, `docker run --privileged tonistiigi/binfmt --install amd64`) and expect a much slower first build. |
-| LibreChat crash-loops with `EACCES: permission denied, '/app/logs'`       | `logs/librechat/` is not owned by uid `1000`. Run `make init-dirs`, or `chown -R 1000:1000 data logs/librechat`.                                                                                                                      |
-| `mcp` never starts                                                        | It waits for the sandbox healthcheck (`/root/.box/ready`). Check `make logs-sandbox`; on the very first run the image build simply takes a long time.                                                                                 |
-| Browser gets a connection reset / empty reply                             | The request's `Host` doesn't match `DOMAIN`; the nginx default server answers `444`. Fix `DOMAIN` in `.env` and `make restart`.                                                                                                       |
-| A tool call fails with a `-32001` timeout                                 | LibreChat's MCP client timeout for `LibreBoxMCP` is 24 h and the server caps tool timeouts at `86400` seconds — raise the tool's own `timeout` argument if needed.                                                                    |
-| `shell_session_execute` returns `timed_out` with a prompt in stdout       | The command is waiting on stdin — the `AwaitingInput` state in [the session lifecycle](#tool-reference). Answer it with `shell_session_send_input`; the call then returns `completed` with the exit code.                             |
-| `file_*` tools can't see something the shell created                      | File tools are jailed to `/root/data`. Anything written elsewhere in the sandbox is only reachable through `shell_execute`.                                                                                                           |
+The entries follow the order in which you would meet them: starting the stack, opening the site, chatting and working in the sandbox. If your problem isn't listed, open an [issue](https://github.com/Kirill-Vaa/LibreBox/issues).
 
----
+### `make up` stops with `.env is missing` or `Placeholders are still left in .env`
 
-## Acknowledgements
+Run `make init-env`. If the message names a key you uncommented, replace its `REPLACE_WITH_` placeholder with a real value or comment the line out again.
 
-Libre Box stands on the shoulders of excellent open-source projects, including [LibreChat](https://github.com/danny-avila/LibreChat), the [Model Context Protocol](https://modelcontextprotocol.io/) and its Python SDK, [gluetun](https://github.com/qdm12/gluetun), [docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy), [Filebrowser](https://github.com/filebrowser/filebrowser), [Playwright](https://playwright.dev/), and the many language toolchains and security tools baked into the sandbox.
+### The sandbox doesn't start: `range of CPUs is from 0.01 to`
+
+`SANDBOX_CPU_LIMIT` is higher than the number of cores Docker has. Lower it in `.env`, or give Docker Desktop more CPUs, then run `make up` again.
+
+### LibreChat or auth-gate can't log in to MongoDB
+
+This happens after `MONGODB_USER` or `MONGODB_PASSWORD` changed, for example when a fresh `.env` was generated on a machine whose database already existed. MongoDB created its root user on the first start and kept it. Put the old values back, or start over with `make clean CONFIRM=yes`, which deletes the database and the other Docker volumes, including LibreChat's uploads.
+
+### Your browser warns about the certificate
+
+That is the self-signed certificate LibreBox creates on the first start. Accept the warning on your own computer. On a server, run `make cert-issue EMAIL=you@example.com`.
+
+### `make cert-issue` fails
+
+Check that the DNS record points at the server and that port 80 is reachable from the internet, then try again with `DRY_RUN=1`. `make cert-issue` accepts only a public host name with a dot in it, such as `chat.example.com`, and refuses `localhost` and IP addresses.
+
+### The site doesn't load at the server's IP address
+
+nginx serves only the name in `DOMAIN`, so open that name instead.
+
+### `/browser/` or `/files/` sends you to the login page
+
+Both use the LibreChat session of the same browser, so sign in to LibreChat at the same address first. If they answer `LibreBox cannot verify your session right now`, nginx got no answer from auth-gate, because auth-gate is down or can't reach MongoDB: check `make ps` and `make logs-auth-gate`.
+
+### LibreChat asks for an API key when you pick a model
+
+The provider's key is not in `.env`. Add it there and run `make restart`, or enter your own key in the dialog. A key in `librechat/.env` doesn't count, because `docker-compose.yml` overrides it.
+
+### Voice input or read-aloud fails
+
+Voice input needs `GROQ_API_KEY` and read-aloud needs `OPENROUTER_API_KEY` in `.env`. Keys that users enter themselves are not used for speech.
+
+### The Browser view only shows "The sandbox browser is closed"
+
+That screen shows whenever no Chrome window is open, so it is normal before the agent opens a page and after it finishes: unless you ask it to leave the browser open, the agent closes its browser session at the end of the task. For quick lookups the agent prefers web search or `curl`, so if it doesn't open the browser at all, ask for the browser in your request. If the view stays black or doesn't connect, check `make ps` and `make logs-browser-view`.
+
+### The agent reports `Sandbox container 'libre-box-sandbox' is unavailable`
+
+The sandbox is still starting or has stopped, or the MCP server can't reach it through the Docker API proxy. Check `make ps`, `make logs-sandbox` and `make logs-docker-socket-proxy`. To recreate the sandbox, run `make sandbox-reset`.
+
+### A command timed out
+
+`shell_execute` stops a command after `DEFAULT_COMMAND_TIMEOUT_SECONDS`, 600 by default, and no call can last more than 1195 seconds, because LibreChat aborts the agent's turn after 20 minutes without output. Longer work belongs in `background_start`, which has no timeout. To change the default, edit the variable in `.env` and run `make restart`.
+
+### Files in `data/` belong to root on a Linux host
+
+The sandbox, the MCP server's file tools and FileBrowser all run as root, so the files they create belong to root. Delete them through Files, or with `sudo` on the host.
+
+## Development
+
+### Project layout
+
+```text
+.env.example            template for .env
+.github/workflows/      lint workflow
+docker-compose.vpn.yml  VPN overlay, added by make up-vpn
+docker-compose.yml      the stack
+librechat/              librechat.yaml, LibreChat's .env, the skills and the plugins
+Makefile                the make targets
+nginx/                  nginx config, TLS certificates and the sidebar script
+services/browser-view/  noVNC viewer for the sandbox's display
+services/certbot/       Let's Encrypt issue and renewal script
+services/egress/        egress gateway (iptables and dnsmasq)
+services/filebrowser/   FileBrowser config
+services/mcp/           MCP server, auth-gate and Docker API proxy (Python)
+services/sandbox/       sandbox image: Dockerfile and install scripts
+vpn/                    files for the WireGuard overlay
+```
+
+`backups/`, `data/` and `logs/` appear when the stack runs (see [Where data lives](#where-data-lives)).
+
+### Checks
+
+The MCP server, auth-gate and the Docker API proxy are one Python 3.14 project in `services/mcp`, built from one Dockerfile with three targets. The CI workflow runs ruff and mypy on it and on `services/sandbox/inventory.py`, and shellcheck on the sandbox's shell scripts. To run the Python checks locally with [uv](https://docs.astral.sh/uv):
+
+```bash
+cd services/mcp
+uv sync --group dev
+uv run ruff check --config pyproject.toml . ../sandbox/inventory.py
+uv run mypy . ../sandbox/inventory.py
+```
+
+The shellcheck command, with the warnings it skips, is in [`.github/workflows/lint.yml`](.github/workflows/lint.yml).
+
+The file tools rely on Linux system calls (`openat2` and Landlock), so try changes in the running stack: `make reload` rebuilds the images whose sources changed, and `make logs-mcp` follows the server's log.
+
+## License
+
+LibreBox is released under the MIT license (see [LICENSE](LICENSE)). LibreChat, the admin panel, FileBrowser and the other software LibreBox runs keep their own licenses.
