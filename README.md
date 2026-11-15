@@ -216,7 +216,7 @@ The table follows the order of `.env.example`. The provider keys, the egress set
 | `COMPOSE_PROFILES` | not set | `make cert-issue` sets it to `certbot`, so that the renewal service starts with the stack. |
 | `DOMAIN` | `localhost` | Host name of the site, used by LibreChat's URLs, nginx and the certificate. It must be a name, not an IP address. |
 | `REAL_IP_PROVIDER` | `none` | Set to `cloudflare` when the site is behind Cloudflare's proxy. |
-| `MONGODB_USER`, `MONGODB_PASSWORD` | `librebox`, generated | MongoDB's root account, created on the first start only. |
+| `MONGODB_USER`, `MONGODB_PASSWORD` | `libre-box`, generated | MongoDB's root account, created on the first start only. |
 | `JWT_SECRET`, `JWT_REFRESH_SECRET` | generated | Sign LibreChat's session tokens. auth-gate checks the session for `/browser/` and `/files/` with the refresh secret. |
 | `CREDS_KEY`, `CREDS_IV` | generated | Encrypt the API keys and MCP credentials that users save. After a change, the saved ones can't be decrypted. |
 | `ADMIN_PANEL_SESSION_SECRET` | generated | Session secret shared by LibreChat and the admin panel. |
