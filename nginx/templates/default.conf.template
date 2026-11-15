@@ -235,7 +235,7 @@ server {
         proxy_buffering off;
     }
 
-    location = /librebox/inject.js {
+    location = /libre-box/inject.js {
         alias /etc/nginx/assets/inject.js;
         expires 1h;
     }
@@ -280,7 +280,7 @@ server {
         proxy_buffering off;
         proxy_cache off;
 
-        sub_filter "</head>" "<script src=\"/librebox/inject.js\" defer></script></head>";
+        sub_filter "</head>" "<script src=\"/libre-box/inject.js\" defer></script></head>";
         sub_filter_once on;
     }
 }

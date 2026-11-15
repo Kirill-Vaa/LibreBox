@@ -1,13 +1,13 @@
 (() => {
   "use strict";
 
-  if (window.__libreboxNav) {
+  if (window.__libreBoxNav) {
     return;
   }
 
-  window.__libreboxNav = true;
+  window.__libreBoxNav = true;
 
-  const MOUNT_ID = "librebox-nav";
+  const MOUNT_ID = "libre-box-nav";
   const ANCHOR_SELECTOR = '[data-testid="nav-user"]';
   const BUTTON_CLASS = "inline-flex items-center justify-center h-9 w-9 mb-1 rounded-lg cursor-pointer transition-colors text-text-secondary hover:bg-surface-hover hover:text-accent-foreground";
   const NAV_LINKS = [
