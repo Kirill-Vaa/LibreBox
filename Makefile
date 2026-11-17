@@ -476,14 +476,14 @@ clear-logs: ## Clear the host log files under logs/ (deletes them when the stack
 	@if [ ! -d logs ]; then \
 		echo "No logs/ directory to clear"; \
 	elif running=$$($(COMPOSE) ps -q --status running 2>/dev/null) && [ -z "$$running" ]; then \
-		find logs -type f -delete 2>/dev/null; \
-		if [ -z "$$(find logs -type f 2>/dev/null)" ]; then \
+		find logs -type f ! -name .gitkeep -delete 2>/dev/null; \
+		if [ -z "$$(find logs -type f ! -name .gitkeep 2>/dev/null)" ]; then \
 			echo "Removed host log files under logs/"; \
 		else \
 			echo "Some files under logs/ could not be removed, retry with sudo"; \
 			exit 1; \
 		fi; \
-	elif find logs -type f -exec truncate -s 0 {} + 2>/dev/null; then \
+	elif find logs -type f ! -name .gitkeep -exec truncate -s 0 {} + 2>/dev/null; then \
 		echo "Truncated host log files under logs/, the files stay in place"; \
 	else \
 		echo "Some files under logs/ are not writable, retry with sudo"; \
