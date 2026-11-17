@@ -41,6 +41,8 @@ services:
   librechat:
     image: librechat/librechat:v0.8.9-rc1
     container_name: libre-box-librechat
+    command: ["node", "api/server/index.js"]
+    init: true
     depends_on:
       mongodb:
         condition: service_healthy
