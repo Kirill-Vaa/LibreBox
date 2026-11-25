@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 librechat/.env.*
+librechat/librechat.override.yaml
 vpn/*.conf
 /data/*
 /logs/*

@@ -75,7 +75,7 @@ services:
       SERPER_API_KEY: ${SERPER_API_KEY:-user_provided}
       XAI_API_KEY: ${XAI_API_KEY:-user_provided}
     volumes:
-      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat:/app/config:ro
       - ./librechat/plugins:/app/plugins:ro
       - ./librechat/skill:/app/skill:ro
       - librechat_images:/app/client/public/images

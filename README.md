@@ -196,11 +196,12 @@ The self-signed certificate that `make up` creates is valid for 365 days, and no
 
 ## Configuration
 
-LibreBox is configured in three files:
+LibreBox is configured in four files:
 
 - `.env` holds the domain, the secrets, the provider keys and the sandbox settings. `make init-env` creates it, and git ignores it.
 - `librechat/.env` holds LibreChat settings that are not secret, such as the app title, the visible endpoints, the session lifetime and the rate limits. It is tracked in git.
 - `librechat/librechat.yaml` defines the model endpoints, the MCP servers, the agent capabilities, speech and web search. It is tracked in git too.
+- `librechat/librechat.override.yaml` adds your own endpoints and MCP servers to `librechat.yaml` (see [Local LibreChat config](#local-librechat-config)). It is optional, and git ignores it.
 
 After editing any of them, run `make restart`. It applies the changes and keeps the sandbox with its running jobs, with two exceptions: a changed `SANDBOX_` limit recreates the sandbox, and a new `SANDBOX_TARGET` needs `make reload` instead (see [Sandbox image](#sandbox-image)).
 
@@ -245,6 +246,29 @@ Three of these variables need a note:
 - `MONGODB_PASSWORD`: if you choose the password yourself, use only letters and digits, because it goes into a connection URL without escaping.
 - `SANDBOX_CPU_LIMIT`: the sandbox also gets it as `OMP_NUM_THREADS` and `MAKEFLAGS=-jN`, because many programs there, such as Python's `os.cpu_count()`, still count all of Docker's cores.
 - `DEFAULT_COMMAND_TIMEOUT_SECONDS`: the agent can pass a longer timeout to a single call, up to 1195. With a value outside 1 to 1195, the MCP server doesn't start.
+
+### Local LibreChat config
+
+Put your own endpoints and MCP servers in `librechat/librechat.override.yaml`, so that `librechat.yaml` stays as it is in git. LibreChat merges the two files on every start: mappings merge key by key, list entries with the same `name` merge into one, other list entries are added if missing, and any other value replaces the one in `librechat.yaml`.
+
+For example, this file adds an OpenAI-compatible provider and lets agents use it:
+
+```yaml
+endpoints:
+  agents:
+    allowedProviders:
+      - 'Example'
+
+  custom:
+    - name: 'Example'
+      apiKey: 'REPLACE_WITH_EXAMPLE_API_KEY'
+      baseURL: 'https://api.example.com/v1'
+      models:
+        default: ['example-model']
+        fetch: true
+```
+
+An MCP server on the host or in your LAN, even one added in LibreChat, also needs its `host:port` under `mcpSettings.allowedAddresses` in this file. Apply changes with `make restart`.
 
 ### Skills and plugins
 
@@ -615,7 +639,10 @@ Each service runs in one container. The service name is the one `make logs-<serv
 
 ### LibreChat image
 
-The `librechat` service runs `libre-box-librechat:local`, which `services/librechat/Dockerfile` builds on the upstream image named in `LIBRECHAT_BASE_IMAGE`. During the build, `apply-patches.js` patches LibreChat's code. Its one patch lets images from MCP tools, such as a screenshot from `file_view_image`, reach the model as images with every provider. Upstream does this only for the providers it knows by name, so a custom endpoint such as Groq gets the image as base64 text. A model that can't read images now fails on such a result instead.
+The `librechat` service runs `libre-box-librechat:local`, which `services/librechat/Dockerfile` builds on the upstream image named in `LIBRECHAT_BASE_IMAGE`. It adds two scripts:
+
+- `merge-config.js` runs before LibreChat on every start. It merges `librechat.override.yaml` into `librechat.yaml` and writes the result to `/tmp/librechat.yaml`, which LibreChat reads through `CONFIG_PATH` (see [Local LibreChat config](#local-librechat-config)).
+- `apply-patches.js` runs once, during the build, and patches LibreChat's code. Its one patch lets images from MCP tools, such as a screenshot from `file_view_image`, reach the model as images with every provider. Upstream does this only for the providers it knows by name, so a custom endpoint such as Groq gets the image as base64 text. A model that can't read images now fails on such a result instead.
 
 Each patch replaces one exact piece of code. When a LibreChat upgrade changes that code, the build stops with `LibreChat changed the patched code` and names the patch, so no image is built without it. Update or remove the patch in `apply-patches.js` and run `make reload` again.
 
@@ -705,14 +732,14 @@ The sandbox, the MCP server's file tools and FileBrowser all run as root, so the
 .github/workflows/      lint workflow
 docker-compose.vpn.yml  VPN overlay, added by make up-vpn
 docker-compose.yml      the stack
-librechat/              librechat.yaml, LibreChat's .env, the skills and the plugins
+librechat/              LibreChat's config files, the skills and the plugins
 Makefile                the make targets
 nginx/                  nginx config, TLS certificates and the sidebar script
 services/browser-view/  noVNC viewer for the sandbox's display
 services/certbot/       Let's Encrypt issue and renewal script
 services/egress/        egress gateway (iptables and dnsmasq)
 services/filebrowser/   FileBrowser config
-services/librechat/     LibreChat image: code patches
+services/librechat/     LibreChat image: config merge and code patches
 services/mcp/           MCP server, auth-gate and Docker API proxy (Python)
 services/sandbox/       sandbox image: Dockerfile and install scripts
 vpn/                    files for the WireGuard overlay
