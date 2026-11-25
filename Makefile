@@ -14,7 +14,7 @@ BACKUP_DIR ?= backups
 
 HELP_WIDTH := 24
 CONFIG_MOUNT_SERVICES := nginx librechat filebrowser
-BACKUP_CONFIG_FILES := .env nginx/certs/fullchain.pem nginx/certs/privkey.pem vpn/wg0.conf
+BACKUP_CONFIG_FILES := .env librechat/librechat.override.yaml nginx/certs/fullchain.pem nginx/certs/privkey.pem vpn/wg0.conf
 SHA256 := $(if $(shell command -v sha256sum 2>/dev/null),sha256sum,shasum -a 256)
 
 COMPOSE_PROJECT = $$($(COMPOSE) config | sed -n '1s/^name: //p')
@@ -249,7 +249,7 @@ list-users: ## List LibreChat user accounts
 reset-password: ## Set a new password for a LibreChat user (prompts for the email and password)
 	@$(COMPOSE) exec librechat npm run --silent reset-password
 
-backup: ## Back up all data, certs, vpn/wg0.conf and .env into BACKUP_DIR/libre-box-<timestamp>
+backup: ## Back up all data, .env, librechat.override.yaml, certs and vpn/wg0.conf into BACKUP_DIR/libre-box-<timestamp>
 	@set -euo pipefail; \
 	umask 077; \
 	target="$(BACKUP_DIR)/libre-box-$$(date +%Y%m%d-%H%M%S)"; \
@@ -329,7 +329,7 @@ backup: ## Back up all data, certs, vpn/wg0.conf and .env into BACKUP_DIR/libre-
 	} > "$$partial/manifest.env"; \
 	(cd "$$partial" && find . -type f ! -name SHA256SUMS | sed 's|^\./||' | sort | xargs $(SHA256) > SHA256SUMS); \
 	mv "$$partial" "$$target"; \
-	echo "Backup written to $$target ($$(du -sh "$$target" | cut -f 1)). It contains the .env file with every secret, the TLS private key and the WireGuard config, so keep it private"
+	echo "Backup written to $$target ($$(du -sh "$$target" | cut -f 1)). It contains the .env file with every secret, any keys and tokens in librechat.override.yaml, the TLS private key and the WireGuard config, so keep it private"
 
 restore: ## Replace all data, certs and vpn/wg0.conf with a backup, .env stays (BACKUP=, DESTROYS DATA). Requires CONFIRM=yes
 	@set -euo pipefail; \

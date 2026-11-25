@@ -534,12 +534,13 @@ Container filesystems, including anything installed in the sandbox outside `data
 - `data/`, `librechat/plugins/` and `librechat/skill/`, as archives.
 - FileBrowser's database. FileBrowser stops for a few seconds while it is copied.
 - LibreChat's uploads and images.
+- `librechat/librechat.override.yaml`, once you have added it.
 - A MongoDB dump.
 - The TLS certificate and its key.
 - `vpn/wg0.conf`, once you have added it.
 - SHA-256 checksums of everything above.
 
-The backup contains the secrets from `.env`, the certificate's private key and the WireGuard config, so keep it somewhere private. Nothing else from the checkout is copied, such as `librechat/.env` or `librechat/librechat.yaml`.
+The backup contains the secrets from `.env`, any keys and tokens in `librechat.override.yaml`, the certificate's private key and the WireGuard config, so keep it somewhere private. Nothing else from the checkout is copied, such as `librechat/.env` or `librechat/librechat.yaml`.
 
 To restore on the same machine, first stop background jobs that write to `data/`, because the sandbox keeps running during the restore. Then pass the folder:
 
@@ -548,9 +549,9 @@ make restore BACKUP=backups/libre-box-20261109-140500 CONFIRM=yes
 make restart
 ```
 
-`make restore` checks the checksums, stops auth-gate, certbot, FileBrowser and LibreChat, and replaces everything the backup holds except `.env`:
+`make restore` checks the checksums, stops auth-gate, certbot, FileBrowser and LibreChat, and replaces everything the backup holds except `.env` and `librechat.override.yaml`:
 
-- `.env` stays as it is. The restore warns if `CREDS_KEY` or `CREDS_IV` differ from the backup, because the API keys users saved can't be decrypted with different values.
+- `.env` and `librechat.override.yaml` stay as they are. To bring them back, copy them from `config/` in the backup. The restore warns if `CREDS_KEY` or `CREDS_IV` differ from the backup, because the API keys users saved can't be decrypted with different values.
 - A backup made before one of these items was included leaves that item as it is.
 - The restored certificate is loaded by nginx once you run `make restart`.
 - A restored `vpn/wg0.conf` takes effect only after `make restart-all`, which restarts the VPN container too.
@@ -558,7 +559,7 @@ make restart
 To move LibreBox to a new machine, start it with the old secrets:
 
 1. Clone the repository and copy the backup folder into `backups/`.
-2. Before the first `make up`, copy the backup's `config/.env` to `.env`, so that MongoDB is created with the old password.
+2. Before the first `make up`, copy the backup's `config/.env` to `.env`, so that MongoDB is created with the old password, and `config/librechat/librechat.override.yaml` to `librechat/`, if the backup has it.
 3. Run `make up`, or `make up-vpn` with the VPN, then the two restore commands above. The restore brings back `vpn/wg0.conf`, but `make up-vpn` needs the file before it starts, so copy it from `config/vpn/` in the backup first.
 4. If the site has a Let's Encrypt certificate, point its DNS record at the new machine, then run `make cert-issue EMAIL=you@example.com` to restart the renewal.
 
