@@ -18,7 +18,7 @@ BACKUP_CONFIG_FILES := .env nginx/certs/fullchain.pem nginx/certs/privkey.pem vp
 SHA256 := $(if $(shell command -v sha256sum 2>/dev/null),sha256sum,shasum -a 256)
 
 COMPOSE_PROJECT = $$($(COMPOSE) config | sed -n '1s/^name: //p')
-LIBRECHAT_IMAGE = $$($(COMPOSE) config --images librechat | grep -vxF "$$($(COMPOSE) config --images mongodb)")
+LIBRECHAT_IMAGE = $$($(COMPOSE) config librechat | sed -n "s/^ *LIBRECHAT_BASE_IMAGE: //p")
 
 MONGO_DATABASE := LibreChat
 MONGO_SHELL_AUTH = db.getSiblingDB("admin").auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD)
