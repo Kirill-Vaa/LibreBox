@@ -578,9 +578,7 @@ make restart
 - `make reload` rebuilds the images whose sources changed and recreates their containers. If that includes the sandbox, its background jobs stop and packages installed outside `data/` are gone.
 - `make restart` loads changed configuration files.
 
-`make update` is a separate step: it pulls the newest images behind moving tags, such as `nginx:alpine` and FileBrowser's `latest`, rebuilds the local images on fresh base images, installs the latest releases of the sandbox's tools and recreates every container whose image changed. When Ubuntu publishes a new base image, the sandbox is rebuilt, which takes about as long as the first build, and its container is recreated, which stops its background jobs. To update only the sandbox's tools, run `make sandbox-update` (see [Tool versions and updates](#tool-versions-and-updates)).
-
-The LibreChat version is pinned in `docker-compose.yml`, in the `LIBRECHAT_BASE_IMAGE` build argument. To upgrade LibreChat, run `make backup`, change the `librechat/librechat` tag there and run `make reload`, which builds LibreBox's LibreChat image on the new version (see [LibreChat image](#librechat-image)).
+`make update` is a separate step, and it also needs `make backup` first. It pulls the newest images behind moving tags, such as LibreChat's and FileBrowser's `latest` and `nginx:alpine`, rebuilds the local images on fresh base images, installs the latest releases of the sandbox's tools and recreates every container whose image changed. When Ubuntu publishes a new base image, the sandbox is rebuilt, which takes about as long as the first build, and its container is recreated, which stops its background jobs. To update only the sandbox's tools, run `make sandbox-update` (see [Tool versions and updates](#tool-versions-and-updates)).
 
 ### Uninstalling
 

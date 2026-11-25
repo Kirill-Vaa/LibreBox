@@ -44,7 +44,7 @@ services:
       context: ./services/librechat
       dockerfile: Dockerfile
       args:
-        LIBRECHAT_BASE_IMAGE: librechat/librechat:v0.8.9-rc1
+        LIBRECHAT_BASE_IMAGE: librechat/librechat:latest
     container_name: libre-box-librechat
     command: ["node", "api/server/index.js"]
     init: true
