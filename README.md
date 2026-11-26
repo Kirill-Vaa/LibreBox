@@ -641,7 +641,9 @@ Each service runs in one container. The service name is the one `make logs-<serv
 The `librechat` service runs `libre-box-librechat:local`, which `services/librechat/Dockerfile` builds on the upstream image named in `LIBRECHAT_BASE_IMAGE`. It adds two scripts:
 
 - `merge-config.js` runs before LibreChat on every start. It merges `librechat.override.yaml` into `librechat.yaml` and writes the result to `/tmp/librechat.yaml`, which LibreChat reads through `CONFIG_PATH` (see [Local LibreChat config](#local-librechat-config)).
-- `apply-patches.js` runs once, during the build, and patches LibreChat's code. Its one patch lets images from MCP tools, such as a screenshot from `file_view_image`, reach the model as images with every provider. Upstream does this only for the providers it knows by name, so a custom endpoint such as Groq gets the image as base64 text. A model that can't read images now fails on such a result instead.
+- `apply-patches.js` runs once, during the build, and patches LibreChat's code. It has two patches.
+  - The first patch lets images from MCP tools, such as a screenshot from `file_view_image`, reach the model as images with every provider. Upstream does this only for the providers it knows by name, so a custom endpoint such as Groq gets the image as base64 text. A model that can't read images now fails on such a result instead.
+  - The second patch adds an intent label to every MCP tool, from the sandbox, Composio or any other server. Upstream adds it on its own only to LibreChat's built-in tools, and each MCP tool needs Intent label turned on in the agent. With the patch the agent writes one sentence about what each call is about to do, and the call's card shows it instead of the tool name. A tool saved with `describe_intent: false` in the agent's tool options gets no label. Each label costs a few tokens per tool on every request.
 
 Each patch replaces one exact piece of code. When a LibreChat upgrade changes that code, the build stops with `LibreChat changed the patched code` and names the patch, so no image is built without it. Update or remove the patch in `apply-patches.js` and run `make reload` again.
 

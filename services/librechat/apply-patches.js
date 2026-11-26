@@ -9,6 +9,12 @@ const patches = [
     search: "const isRecognizedProvider = RECOGNIZED_PROVIDERS.has(provider);",
     replacement: "const isRecognizedProvider = true;",
   },
+  {
+    name: "Every MCP tool gets an intent label",
+    path: "/app/packages/api/dist/index.cjs",
+    search: "if (resolved == null && !NATIVE_INTENT_TOOL_NAMES.has(def.name)) return def;",
+    replacement: "if (resolved == null && !NATIVE_INTENT_TOOL_NAMES.has(def.name) && !def.name.includes(librechat_data_provider.Constants.mcp_delimiter)) return def;",
+  },
 ];
 
 const failedPatches = [];
