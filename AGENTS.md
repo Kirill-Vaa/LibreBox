@@ -1,38 +1,36 @@
 # Coding Conventions
 
-These conventions cover the Python code in this repository. Apply them to new code and to the code you change for the current task. The file-ending rule applies to every file in the repository.
-
-- End `.py` files with exactly one trailing newline. End all other files without a trailing newline, so their last line has content.
+Apply these conventions to code you write or change. End every `.py` file you create or edit with exactly one trailing newline, and every other file with no trailing newline.
 
 ## General
-- Rename identifiers and change signatures when that makes the code clearer within the current task.
-- Use async/await by default. Write synchronous code only for CPU-bound work or where async gives no benefit.
-- Use one library per purpose. If the project already uses `httpx`, don't add `aiohttp` for the same job.
+- Rename identifiers and change signatures when it makes the code clearer within the task's scope.
+- Default to async/await. Write synchronous code only for CPU-bound work or where async gives no benefit.
+- Use one library per purpose. Don't add `aiohttp` when the project already uses `httpx`.
 
 ## Naming
-- Spell words out: `message`, `response`, `request`, `value`, `error`, `element` instead of `msg`, `res`, `resp`, `req`, `val`, `e`, `el`. Instead of placeholder names such as `obj`, `var`, `tmp`, `arr`, name what the value holds.
-- Name loop variables after the item, for example `for order in orders`. Single letters are fine only for simple numeric ranges such as `for i in range(count)`.
-- Start boolean names with `is_`, `has_`, `should_`, `can_`, or a similar prefix.
+- Spell words out: `message`, `response`, `request`, `value`, `element`, not `msg`, `resp`, `req`, `val`, `el`. Name a value after what it holds, not `obj`, `var`, `tmp`, `arr`.
+- Name loop variables after the item (`for order in orders`). Use single letters only for simple numeric ranges.
+- Prefix boolean names with `is_`, `has_`, `should_`, `can_`, or similar.
 
 ## Ordering
-- Place a new element (function, method, field, import, config key, enum member) where it belongs in the existing order of similar elements, not at the end of the file or block.
-- If similar elements have no clear order, choose a logical one, such as by execution flow, by importance, or alphabetically. Place the new element according to that order.
-- Keep related declarations and their uses in the same order. If handlers are registered as A, B, C, define them as A, B, C.
-- Put parameters and fields without defaults before those with defaults, wherever Python syntax and the framework allow it.
+- Insert a new function, method, field, import, config key, or enum member where it fits the existing order of similar elements, instead of appending it at the end. If there is no clear order, follow a logical one: execution flow, importance, or alphabetical.
+- Keep declarations in the same order as their uses: handlers registered as A, B, C are defined as A, B, C.
+- Put parameters and fields without defaults before those with defaults, even where Python doesn't enforce it, as with keyword-only parameters and model fields.
 
 ## Formatting
 - Use double quotes. Use single quotes only when the string contains a double quote.
-- Use f-strings for interpolation instead of `.format()`, `%`, `string.Template`, or `+` concatenation.
+- Interpolate with f-strings, not `.format()`, `%`, or `+`.
 - Use triple-quoted strings only for large blocks of text and aiogram message texts.
-- Keep each string as one literal on one line, even past the line length. Don't split it like `("..."` / `"...")`.
-- Keep a statement on one line when it stays readable and fits the line length.
-- Minimize the use of `;`. Don't join several statements on one line with it, write each statement on its own line.
-- Write each `from module import a, b, c` on a single line, even when it exceeds the line length. Only `__init__.py` may use multi-line grouped imports.
+- Keep a statement on one line when it fits the line length and stays readable. Don't join statements with `;`.
+- Keep each string as a single literal and each `from module import a, b, c` on a single line, even past the line length. Only `__init__.py` may use multi-line grouped imports.
 - Leave two blank lines after the import block.
-- Don't add comments or docstrings. Express intent through names instead. Keep existing comments and docstrings, and update or remove any that your change makes inaccurate.
+- Don't add comments or docstrings. Let names carry the intent. Keep existing ones, and update or remove any that your change makes inaccurate.
 
 ## Errors and Logging
-- Catch the specific exception types you expect. Use `except Exception` only at a top-level boundary or as a final fallback that handles or reports unexpected failures.
-- Name a bound exception `error` when there is a single handler or the handler catches `Exception`. With several handlers, name each one after its type: `value_error`, `timeout_error`, `key_error`.
-- Write log messages in English as a single f-string with no trailing period. Include context that locates the problem, such as an ID, a path, or the operation name: `logger.warning(f"Failed to send message to user {user_id}: {error}")`.
-- Choose the level by severity: `debug` for diagnostics, `info` for normal events, `warning` for recoverable issues, `error` for failed operations, and `exception` inside an `except` block when the traceback is needed.
+- Catch specific exceptions. Use `except Exception` only at a top-level boundary or as a final fallback that handles or reports the failure.
+- Name a caught exception `error`. When a `try` has several handlers, name the specific ones after their type (`value_error`, `timeout_error`) and keep `error` for `except Exception`.
+- Write log messages in English as one f-string with no trailing period. Include context that locates the problem, such as an ID, a path, or the operation: `logger.warning(f"Failed to send message to user {user_id}: {error}")`.
+
+## README and Commits
+- When you change behavior, configuration, commands, or environment variables, update README.md in the same task if the change affects it. If it doesn't, say so in one line of your final message.
+- Write a commit message as one Conventional Commits subject line in lowercase imperative, such as `feat(config): add REDIS_URL setting`, matching the style and language of `git log`. Give one message, not several options. Add a body only when asked.
