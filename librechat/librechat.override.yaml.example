@@ -1,0 +1,61 @@
+# Local additions to librechat.yaml. This file is ignored by git and saved by make backup.
+#
+# 1. Copy this file to librechat.override.yaml and uncomment only what you need.
+# 2. Run make restart.
+# 3. Run make logs-librechat and look for "Merged ... into ...". If the merge fails, for example on a YAML error,
+#    LibreChat doesn't start and the log shows the reason.
+#
+# The file is merged into librechat.yaml on every start:
+# - mappings merge key by key, so give only the keys you change;
+# - list entries with the same name merge into one;
+# - other list entries, such as strings, are added if missing;
+# - any other value replaces the one in librechat.yaml.
+
+# Replace a single value.
+# interface:
+#   customWelcome: 'Welcome to my LibreBox!'
+
+# Add an MCP server on the host or in your LAN.
+# Its host:port must also be in allowedAddresses, even when the server is added in LibreChat instead of here.
+# On Docker Desktop, use host.docker.internal for a server on the host itself, for example 'host.docker.internal:8000'.
+# mcpSettings:
+#   allowedAddresses:
+#     - '192.168.1.10:8000'
+#
+# mcpServers:
+#   HomeServer:
+#     type: 'streamable-http'
+#     url: 'http://192.168.1.10:8000/mcp'
+#     title: 'Home server'
+#     description: 'MCP server in the local network.'
+#     # Remove headers if the server needs no token.
+#     headers:
+#       Authorization: 'Bearer REPLACE_WITH_HOME_SERVER_TOKEN'
+#     # true uses the server's own instructions; a string replaces them.
+#     serverInstructions: true
+#     # Longest tool call in milliseconds (24 hours, as for the servers in librechat.yaml).
+#     timeout: 86400000
+
+# endpoints:
+#   agents:
+#     # Agents can use only the providers listed here.
+#     allowedProviders:
+#       - 'Example'
+#
+#   custom:
+#     # Add an OpenAI-compatible provider. Use apiKey: 'user_provided' to let every user enter their own key.
+#     - name: 'Example'
+#       apiKey: 'REPLACE_WITH_EXAMPLE_API_KEY'
+#       baseURL: 'https://api.example.com/v1'
+#       models:
+#         default: ['example-model']
+#         fetch: true
+#       titleModel: 'example-model'
+#       modelDisplayLabel: 'Example'
+#
+#     # Change a provider from librechat.yaml: only the keys given here change,
+#     # and the model is added to its default list.
+#     - name: 'OpenRouter'
+#       models:
+#         default: ['anthropic/claude-sonnet-5.5']
+#       titleModel: 'anthropic/claude-sonnet-5.5'

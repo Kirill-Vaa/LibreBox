@@ -251,21 +251,10 @@ Three of these variables need a note:
 
 Put your own endpoints and MCP servers in `librechat/librechat.override.yaml`, so that `librechat.yaml` stays as it is in git. LibreChat merges the two files on every start: mappings merge key by key, list entries with the same `name` merge into one, other list entries are added if missing, and any other value replaces the one in `librechat.yaml`.
 
-For example, this file adds an OpenAI-compatible provider and lets agents use it:
+To start, copy the example, which shows how to add a provider and an MCP server and how to change a provider from `librechat.yaml`. Everything in it is commented out, so uncomment only what you need:
 
-```yaml
-endpoints:
-  agents:
-    allowedProviders:
-      - 'Example'
-
-  custom:
-    - name: 'Example'
-      apiKey: 'REPLACE_WITH_EXAMPLE_API_KEY'
-      baseURL: 'https://api.example.com/v1'
-      models:
-        default: ['example-model']
-        fetch: true
+```sh
+cp librechat/librechat.override.yaml.example librechat/librechat.override.yaml
 ```
 
 An MCP server on the host or in your LAN, even one added in LibreChat, also needs its `host:port` under `mcpSettings.allowedAddresses` in this file. Apply changes with `make restart`.
